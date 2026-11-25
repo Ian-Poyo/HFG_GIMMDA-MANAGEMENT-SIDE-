@@ -72,6 +72,29 @@ breaking the other.
 
 ---
 
+## Giving a member their portal login
+
+Members do not sign themselves up. You create their login from the dashboard:
+
+1. **Members** → find the person → **View** to open their profile.
+2. Under **MEMBER PORTAL**, type their email (it is pre-filled if you stored one)
+   and click **Create portal login**.
+3. The screen shows a **Member ID**, the **email** and a **password**. Copy all three
+   and hand them over — by SMS, Messenger, or on paper.
+
+**The password is shown once and is never stored in readable form.** If it is lost,
+create nothing new: the account already exists. Reset it from
+Supabase → Authentication → Users, or ask for it to be reset.
+
+The member then signs in at the member-app link and can change the password
+themselves. Each member can have exactly one login, and only the **owner** account
+can create logins — staff accounts cannot.
+
+> This runs as a Supabase Edge Function called `create-member-login`. The
+> service key stays on the server; it never reaches the browser.
+
+---
+
 ## Before real members use this
 
 1. **Replace the demo logins.** `@gimmda.test` addresses cannot receive mail.

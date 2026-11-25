@@ -98,6 +98,18 @@
   const passwordInput = document.querySelector('#password');
   const loginButton = loginForm.querySelector('.login-submit');
   const loginNote = loginForm.querySelector('.login-note');
+  // The "Show" control in the password box was present in the markup but never wired,
+  // so it did nothing. Bind it here (login form only; other forms keep their own inputs).
+  const showPasswordButton = document.querySelector('#show-password');
+  if (showPasswordButton && passwordInput) {
+    showPasswordButton.addEventListener('click', () => {
+      const revealed = passwordInput.type === 'text';
+      passwordInput.type = revealed ? 'password' : 'text';
+      showPasswordButton.textContent = revealed ? 'Show' : 'Hide';
+      showPasswordButton.setAttribute('aria-pressed', String(!revealed));
+      passwordInput.focus();
+    });
+  }
   const ownerShell = document.querySelector('.shell:not(#staff-shell)');
   const staffShell = document.querySelector('#staff-shell');
   const ownerContent = ownerShell.querySelector('.content');
@@ -761,8 +773,37 @@
       <div class="profile-section"><div class="profile-section-title">RECENT PAYMENTS</div>${payments.length ? payments.map(p => `<div class="profile-history"><div>${esc(p.receipt_no)}<small>${esc(phDateTime(p.created_at))} · ${esc(p.method)} · ${esc(p.status)}</small></div><b>${peso(p.amount)}</b></div>`).join('') : '<p class="sub">No payments recorded.</p>'}</div>
       <div class="profile-section"><div class="profile-section-title">RECENT VISITS</div>${visits.length ? visits.map(v => `<div class="profile-history"><div>${esc(phDateTime(v.checked_in_at))}<small>${v.checked_out_at ? 'Out ' + esc(phDateTime(v.checked_out_at)) : 'Still inside'}</small></div></div>`).join('') : '<p class="sub">No visits recorded.</p>'}</div>
       ${memberActionsSection(member)}
-      <div class="profile-section"><div class="profile-section-title">MEMBER PORTAL</div><p class="sub" style="line-height:1.8">${member.auth_user_id ? 'This member has a linked portal account.' : 'No portal account linked yet. Create the account in Supabase Auth, then link it here so they can sign in to the member portal.'}</p>${member.auth_user_id ? '' : `<label class="field">Account email</label><input class="login-input" id="link-email" type="email" placeholder="member@email.com"><button class="outline" id="link-account" style="margin-top:10px">Link portal account</button>`}</div>`;
+      <div class="profile-section"><div class="profile-section-title">MEMBER PORTAL</div>${member.auth_user_id
+        ? '<p class="sub" style="line-height:1.8">This member has a portal login and can sign in to see their pass and payment history.</p>'
+        : `<p class="sub" style="line-height:1.8">This member cannot sign in yet. Create a login below and give them the password — they change it after signing in.</p>
+           <label class="field">Account email</label><input class="login-input" id="login-email" type="email" placeholder="member@email.com" value="${esc(member.email || '')}">
+           <button class="login-submit" id="create-login" style="margin-top:10px;width:auto;padding:0 18px;height:40px">Create portal login</button>
+           <p class="sub" style="margin-top:8px">Only the owner can do this. A password is generated and shown once.</p>
+           <details style="margin-top:14px"><summary class="sub" style="cursor:pointer">Already have an account for them?</summary>
+             <label class="field" style="margin-top:10px">Account email</label><input class="login-input" id="link-email" type="email" placeholder="member@email.com"><button class="outline" id="link-account" style="margin-top:10px">Link existing account</button>
+           </details>`}</div>`;
     wireMemberActions(member, () => { const still = live.members.find(m => m.id === member.id); if (still) showOwnerMember(still.id); else renderOwnerMembers(); });
+    const createButton = detail.querySelector('#create-login');
+    if (createButton) createButton.onclick = async () => {
+      const email = detail.querySelector('#login-email').value.trim();
+      if (!email) return toastLive('Enter the email to use for signing in.');
+      createButton.disabled = true;
+      try {
+        const result = await createMemberLogin(member.id, email);
+        dialog({
+          title: 'Portal login created',
+          body: `<p style="margin:0 0 14px">Give these details to <b>${esc(result.full_name)}</b>. They sign in at the member portal.</p>
+            <div class="wf-row"><span>Member ID</span><strong>${esc(result.member_no)}</strong></div>
+            <div class="wf-row"><span>Email</span><strong>${esc(result.email)}</strong></div>
+            <div class="wf-row"><span>Password</span><strong style="font-family:ui-monospace,monospace">${esc(result.password)}</strong></div>
+            <p class="sub" style="margin-top:14px">This password works every time they sign in and does not expire. It is shown only now, so write it down before closing. If they lose it, the owner resets it from Supabase → Authentication.</p>`,
+          action: 'Done',
+          onAction: () => {}
+        });
+        await refreshData(true);
+      } catch (error) { toastLive(loginErrorMessage(error)); }
+      finally { createButton.disabled = false; }
+    };
     const linkButton = detail.querySelector('#link-account');
     if (linkButton) linkButton.onclick = async () => {
       const email = detail.querySelector('#link-email').value.trim();
@@ -774,6 +815,41 @@
         showOwnerMember(memberId);
       } catch (error) { toastLive(friendly(error)); }
     };
+  }
+
+  /* ---- Portal logins ---------------------------------------------------- */
+  // Creates a sign-in account for a member. The service key lives in the Edge Function,
+  // never here — the browser only sends its own token and gets back a generated password.
+  async function createMemberLogin(memberId, email) {
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token) throw new Error('NOT_SIGNED_IN');
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/create-member-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ member_id: memberId, email })
+    });
+    let body = null;
+    try { body = await response.json(); } catch (error) { /* non-JSON */ }
+    if (!response.ok || !body?.ok) {
+      throw new Error(body?.error || `CREATE_FAILED_${response.status}`);
+    }
+    return body;
+  }
+
+  function loginErrorMessage(error) {
+    const code = String(error?.message || '');
+    const messages = {
+      NOT_SIGNED_IN: 'Your session expired. Sign in again.',
+      FORBIDDEN: 'Only the owner can create portal logins.',
+      EMAIL_INVALID: 'That does not look like an email address.',
+      EMAIL_IN_USE: 'An account already uses that email. Use “Link existing account” instead.',
+      ALREADY_HAS_LOGIN: 'This member already has a portal login.',
+      MEMBER_NOT_FOUND: 'That member no longer exists.',
+      CREATE_FAILED: 'Could not create the account. Try again in a moment.'
+    };
+    const key = Object.keys(messages).find(k => code.includes(k));
+    return key ? messages[key] : 'Could not create the login. Try again.';
   }
 
   /* ---- Member lifecycle: photo, freeze, archive, merge ------------------ */
