@@ -1,6 +1,8 @@
 /* GIMMDA dashboard · shared Supabase data layer
    Public configuration only. All permission checks happen in the database. */
 const SUPABASE_URL = 'https://jsfrbgeliyfijinmxvmi.supabase.co';
+// Cloudflare Turnstile Site Key (live production key for hfg-management-side.vercel.app; ensure Secret Key is saved in Supabase Auth -> Bot & Abuse Protection).
+const TURNSTILE_SITE_KEY = '0x4AAAAAAGUdL9c2mvJEqUyf';
 const SUPABASE_KEY = 'sb_publishable_GsyE4fCJRec6y1od2KACEw_A2zAWUOr';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
@@ -25,6 +27,7 @@ const live = {
   shifts: [],
   expenses: [],
   broadcasts: [],
+  feedback: [],
   activityKinds: [],
   summary: null,
   period: 'month',
@@ -107,7 +110,7 @@ async function signUpFirstOwner(email, password, fullName) {
 }
 
 async function loadAll() {
-  const [members, plans, inventory, payments, visits, sales, movements, walkins, activity, requests, team, settings, summary, shifts, expensesAll, broadcasts, kinds] = await Promise.all([
+  const [members, plans, inventory, payments, visits, sales, movements, walkins, activity, requests, team, settings, summary, shifts, expensesAll, broadcasts, feedback, kinds] = await Promise.all([
     sb.from('member_directory').select('*').order('created_at', { ascending: false }),
     sb.from('membership_plans').select('*').order('months'),
     sb.from('inventory_items').select('*').order('name'),
@@ -124,9 +127,10 @@ async function loadAll() {
     sb.from('shifts').select('*').order('clocked_in_at', { ascending: false }).limit(40),
     sb.from('expenses').select('*').order('spent_on', { ascending: false }).limit(60),
     sb.from('broadcasts').select('*').order('created_at', { ascending: false }).limit(30),
+    sb.from('feedback').select('*').order('created_at', { ascending: false }).limit(200),
     sb.rpc('activity_kinds')
   ]);
-  for (const res of [members, plans, inventory, payments, visits, sales, movements, walkins, activity, requests, team, settings, summary, shifts, expensesAll, broadcasts, kinds]) {
+  for (const res of [members, plans, inventory, payments, visits, sales, movements, walkins, activity, requests, team, settings, summary, shifts, expensesAll, broadcasts, feedback, kinds]) {
     if (res?.error) console.warn('GIMMDA data', res.error);
   }
   live.members = members.data || [];
@@ -144,20 +148,29 @@ async function loadAll() {
   live.shifts = shifts?.data || [];
   live.expenses = expensesAll?.data || [];
   live.broadcasts = broadcasts?.data || [];
+  live.feedback = feedback?.data || [];
   live.activityKinds = kinds?.data || [];
   live.summary = summary.data || summary || null;
   live.lastSync = new Date();
 }
 
 async function ownerSummary() {
-  const range = live.period === 'week' ? weekRange() : monthRange();
+  const range = periodRange();
   const { data, error } = await sb.rpc('owner_summary', { p_from: range.from, p_to: range.to });
   if (error) return { error };
   return data;
 }
+function todayRange() {
+  const today = phToday();
+  return { from: today, to: today };
+}
 function monthRange() {
   const today = phToday();
   return { from: today.slice(0, 8) + '01', to: today };
+}
+function yearRange() {
+  const today = phToday();
+  return { from: today.slice(0, 4) + '-01-01', to: today };
 }
 function weekRange() {
   const now = new Date();
@@ -167,5 +180,11 @@ function weekRange() {
   const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   return { from: fmt(monday), to: phToday() };
 }
+function periodRange(p = live.period) {
+  if (p === 'today') return todayRange();
+  if (p === 'week') return weekRange();
+  if (p === 'year') return yearRange();
+  return monthRange();
+}
 
-window.GIMMDA = { live, sb, call, loadAll, signUpFirstOwner, friendly, planLabel, peso, phToday, phDateTime, fmtDay, chTime, escHtml, dash, initials, ownerSummary, monthRange, weekRange };
+window.GIMMDA = { TURNSTILE_SITE_KEY, live, sb, call, loadAll, signUpFirstOwner, friendly, planLabel, peso, phToday, phDateTime, fmtDay, chTime, escHtml, dash, initials, ownerSummary, todayRange, monthRange, weekRange, yearRange, periodRange };
