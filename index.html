@@ -551,12 +551,16 @@ dialog.renew-dialog.add-member-dialog{width:min(560px,calc(100% - 28px));max-hei
 
 /* Clean Member Profile pop-up modal */
 dialog.renew-dialog.member-profile-dialog{width:min(720px,calc(100% - 28px));max-height:90vh;overflow:auto;border-radius:20px}
-.mp-head{background:linear-gradient(135deg,#193222 0%,#26412f 100%);color:#fff;padding:22px 26px 20px;position:relative;overflow:hidden}
-.mp-head::after{content:"";position:absolute;width:180px;height:180px;border:1px solid rgba(217,237,195,.14);border-radius:50%;right:-55px;top:-65px;box-shadow:0 0 0 24px rgba(217,237,195,.04);pointer-events:none}
+.mp-head{background:radial-gradient(circle at 88% 22%,rgba(156,219,98,.18) 0%,rgba(156,219,98,0) 48%),linear-gradient(145deg,#152b1d 0%,#1f3b28 54%,#193221 100%);color:#fff;padding:22px 26px 20px;position:relative;overflow:hidden;border-bottom:1px solid rgba(182,226,142,.18)}
+.mp-head-watermark{position:absolute;right:18px;top:16px;width:142px;height:142px;object-fit:contain;opacity:.14;pointer-events:none;filter:drop-shadow(0 8px 20px rgba(0,0,0,.35));user-select:none}
 .mp-head-top{display:flex;align-items:center;justify-content:space-between;gap:12px;position:relative;z-index:1}
-.mp-head-top .eyebrow{color:#b5cfa9;margin:0}
-.mp-close{border:0;background:rgba(255,255,255,.14);color:#fff;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:18px;display:grid;place-items:center;transition:background .15s}
-.mp-close:hover{background:rgba(255,255,255,.24)}
+.mp-brand{display:flex;align-items:center;gap:10px;min-width:0}
+.mp-brand-badge{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.08);border:1px solid rgba(180,224,136,.24);display:grid;place-items:center;flex-shrink:0;padding:4px;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.mp-brand-badge img{width:100%;height:100%;object-fit:contain;display:block}
+.mp-brand .eyebrow{color:#b9d8a6;margin:0;line-height:1.2}
+.mp-brand-sub{display:block;font:600 10px 'DM Sans',sans-serif;letter-spacing:.7px;color:rgba(232,243,225,.72);margin-top:2px}
+.mp-close{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.10);color:#fff;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:18px;display:grid;place-items:center;transition:background .15s}
+.mp-close:hover{background:rgba(255,255,255,.22)}
 .mp-identity{display:flex;align-items:center;gap:15px;margin-top:16px;position:relative;z-index:1;flex-wrap:wrap}
 .mp-avatar{width:62px;height:62px;border-radius:16px;background:#dcebc8;color:#2f4c34;display:grid;place-items:center;font:700 20px Manrope,sans-serif;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,255,255,.28)}
 .mp-avatar img{width:100%;height:100%;object-fit:cover;display:block}
@@ -566,9 +570,23 @@ dialog.renew-dialog.member-profile-dialog{width:min(720px,calc(100% - 28px));max
 .mp-photo-bar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
 .mp-photo-btn{border:1px solid rgba(255,255,255,.24);background:rgba(255,255,255,.10);color:#eef6e8;border-radius:99px;padding:4px 11px;font:600 10.5px 'DM Sans',sans-serif;cursor:pointer;display:inline-flex;align-items:center}
 .mp-photo-btn:hover{background:rgba(255,255,255,.18)}
-.mp-plan-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.16);position:relative;z-index:1}
+.mp-plan-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px;padding:12px 15px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:12px;position:relative;z-index:1}
 .mp-plan-strip small{display:block;font-size:9px;font-weight:700;letter-spacing:.7px;color:#a8c1a7}
 .mp-plan-strip strong{display:block;font-size:12.5px;color:#f6fbf4;margin-top:4px}
+.mp-pw-grid{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;margin-top:4px}
+.mp-pw-grid .input-box{position:relative}
+.mp-pw-grid .login-input{padding-right:54px}
+.mp-pw-grid .password-toggle{position:absolute;right:10px;top:0;height:40px;border:0;background:none;color:#5d7b59;font-size:11px;font-weight:700;cursor:pointer}
+.mp-pw-grid .outline{height:40px;padding:0 13px;border-radius:9px;font-size:11.5px;white-space:nowrap}
+.mp-pw-grid .login-submit{height:40px;width:auto;padding:0 16px;font-size:11.5px;white-space:nowrap}
+.owner-settings-profile-banner{display:flex;align-items:center;gap:14px;padding:13px 15px;border-radius:13px;background:#f4f8f1;border:1px solid #e4ede0;margin-bottom:14px}
+.owner-settings-avatar{width:46px;height:46px;border-radius:50%;background:#1e3a27;color:#eef6e8;display:grid;place-items:center;font:700 15px Manrope,sans-serif;flex-shrink:0;letter-spacing:.4px}
+.owner-settings-profile-banner strong{display:block;font-size:13.5px;color:#1d3324}
+.owner-settings-profile-banner small{display:block;font-size:11px;color:#738876;margin-top:3px}
+.settings-card .input-box{position:relative}
+.settings-card .input-box .login-input{padding-right:56px}
+.settings-card .input-box .password-toggle{position:absolute;right:10px;top:0;height:48px;border:0;background:none;color:#5d7b59;font-size:11px;font-weight:700;cursor:pointer}
+@media(max-width:620px){.mp-pw-grid{grid-template-columns:1fr}.mp-pw-grid .login-submit,.mp-pw-grid .outline{width:100%}}
 .mp-body{padding:20px 26px 26px;background:#fff;display:grid;gap:16px}
 .mp-action-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .mp-action-bar .login-submit{width:auto;height:36px;padding:0 16px;font-size:11.5px;border-radius:99px}
@@ -619,6 +637,17 @@ dialog.renew-dialog.member-profile-dialog{width:min(720px,calc(100% - 28px));max
 .staff-profile-photo-actions{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
 .staff-walkin-card,.staff-pos-card{border:1px solid #e8efe5;border-radius:18px;padding:22px 24px;background:#fff}
 .staff-panel,.attendance-lookup,.attendance-current,.attendance-activity,.owner-directory{border:1px solid #e8efe5}
+.team-actions .team-delete{color:#a5423b;border-color:#efd2cf}
+.team-actions .team-delete:hover{background:#fdf2f1;border-color:#dfada8}
+.team-activity-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:18px}
+.team-view-all{border:0;background:none;padding:2px 0;color:#4f7a38;font:700 11px 'DM Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.team-view-all:hover{text-decoration:underline;color:#2f5320}
+.team-activity-scroll{max-height:260px;overflow-y:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px;border-top:1px solid #edf2eb;scrollbar-width:thin;scrollbar-color:#cdd9c8 transparent}
+.team-activity-scroll::-webkit-scrollbar{width:6px}
+.team-activity-scroll::-webkit-scrollbar-thumb{background:#d4e0ce;border-radius:99px}
+.team-activity-item{padding:10px 0;border-bottom:1px solid #f2f5f0;font-size:11.5px;color:#354d3b;line-height:1.45}
+.team-activity-item:last-child{border-bottom:0}
+.team-activity-item small{display:block;color:#8f9e91;font-size:10px;margin-top:3px}
 @media(max-width:640px){.staff-search-bar{flex-direction:column;align-items:stretch}.staff-shift-card{padding:18px}}
 
 /* ===== Minimalist Centered Architectural Sign-in ===== */

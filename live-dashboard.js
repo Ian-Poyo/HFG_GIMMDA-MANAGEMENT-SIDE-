@@ -16,12 +16,15 @@
     const metaName = (meta.full_name || meta.name || '').trim();
     const profileName = (profile.full_name || '').trim();
     const generic = /^(gym owner|owner|admin|user|staff|member)$/i.test(metaName);
-    const name = (generic ? '' : metaName) || profileName || fromEmail || '';
+    const name = profileName || (generic ? '' : metaName) || fromEmail || '';
     const label = name || email || 'Account';
     const parts = label.split(/\s+/).filter(Boolean);
     const first = parts.length ? parts[0] : 'there';
-    const ini = parts.slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
-    return { first, ini, label, email };
+    const last = parts.length > 1 ? parts[parts.length - 1] : first;
+    const ini = parts.length > 1
+      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+      : (parts[0]?.[0] || '?').toUpperCase();
+    return { first, last, ini, label, email };
   }
 
   /* ---- Tier 3 ops: error reporting, offline queue, upload checks --------- */
@@ -608,7 +611,7 @@
       const { data: throttle } = await sb.rpc('login_throttle_status', { p_email: email });
       if (throttle && throttle.allowed === false) {
         busy(false);
-        return setNote(`Too many failed attempts. Try again in ${throttle.retry_after_minutes} minutes, or ask the gym owner to reset your password.`, 'error');
+        return setNote(`Too many failed attempts. Try again in ${throttle.retry_after_minutes} minutes.`, 'error');
       }
     } catch (failure) { /* never block a sign-in because the check itself failed */ }
     if (turnstileKey && !isTurnstileTestKey && !loginCaptchaToken) {
@@ -625,7 +628,7 @@
     if (error) {
       resetLoginTurnstile();
       const message = /invalid login credentials/i.test(error.message)
-        ? 'That email and password don’t match an account. Ask the gym for help.'
+        ? 'Unable to sign in. Incorrect email or password.'
         : /email not confirmed/i.test(error.message)
           ? 'Confirm your email address before signing in.'
           : friendly(error);
@@ -648,21 +651,35 @@
       await sb.auth.signOut();
       resetLoginTurnstile();
       busy(false);
-      setNote('This account has no gym profile yet. Ask the owner to finish setup.', 'error');
+      setNote('Unable to sign in. You cannot access this account right now.', 'error');
       return;
     }
     if (!profile.is_active) {
       await sb.auth.signOut();
       resetLoginTurnstile();
       busy(false);
-      setNote('This account has been deactivated. Contact the gym owner.', 'error');
+      setNote('Unable to sign in. This account is inactive.', 'error');
       return;
     }
     if (profile.role === 'member') {
+      try {
+        const { error: memberErr } = await sb.rpc('member_portal_data');
+        if (memberErr) throw memberErr;
+        window.location.replace('/member/');
+        return;
+      } catch (memberLoadError) {
+        await sb.auth.signOut();
+        resetLoginTurnstile();
+        busy(false);
+        setNote('Unable to sign in. You cannot access this account right now.', 'error');
+        return;
+      }
+    }
+    if (profile.role !== 'owner' && profile.role !== 'staff') {
       await sb.auth.signOut();
       resetLoginTurnstile();
       busy(false);
-      setNote('This account is waiting for the owner to assign access. Ask the owner to set your role on the Staff page.', 'error');
+      setNote('Unable to sign in. Access denied.', 'error');
       return;
     }
     if (profile.must_change_password) {
@@ -708,9 +725,13 @@
     ownerShell.hidden = false;
     staffShell.hidden = true;
     const who = currentIdentity();
-    ownerShell.querySelector('.intro h1').innerHTML = `Good day, <em>${esc(who.first)}.</em>`;
+    ownerShell.querySelector('.intro h1').innerHTML = `Good day, <em id="owner-greeting-name">${esc(who.last)}.</em>`;
     ownerShell.querySelector('.avatar').textContent = who.ini;
     ownerShell.querySelector('.avatar').title = who.label;
+    if (live.settings?.gym_name) {
+      const gymBrand = ownerShell.querySelector('.gym-brand-name');
+      if (gymBrand) gymBrand.textContent = live.settings.gym_name.toUpperCase();
+    }
     bootUpDashboard(ownerShell);
     refreshOwner('Overview', true);
     window.scrollTo(0, 0);
@@ -1089,11 +1110,18 @@
   }
 
   function paintGreeting() {
-    const el = document.getElementById('owner-greeting-name');
-    if (!el) return;
-    const name = (live.profile?.full_name || '').trim();
-    const first = name ? name.split(/\s+/)[0] : '';
-    el.textContent = first ? `${first}.` : 'there.';
+    const who = currentIdentity();
+    const h1 = ownerShell?.querySelector('.intro h1');
+    if (h1) h1.innerHTML = `Good day, <em id="owner-greeting-name">${esc(who.last)}.</em>`;
+    const avatar = ownerShell?.querySelector('.avatar');
+    if (avatar) {
+      avatar.textContent = who.ini;
+      avatar.title = who.label;
+    }
+    const gymBrand = ownerShell?.querySelector('.gym-brand-name');
+    if (gymBrand && live.settings?.gym_name) {
+      gymBrand.textContent = live.settings.gym_name.toUpperCase();
+    }
   }
 
   function renderOwnerOverview() {
@@ -1401,8 +1429,15 @@
     box.id = 'member-profile-dialog';
     box.innerHTML = `
       <div class="mp-head">
+        <img class="mp-head-watermark" src="green-emblem.png" alt="" aria-hidden="true">
         <div class="mp-head-top">
-          <div class="eyebrow">MEMBER PROFILE</div>
+          <div class="mp-brand">
+            <span class="mp-brand-badge"><img src="green-emblem.png" alt="GIMMDA"></span>
+            <div>
+              <div class="eyebrow">MEMBER PROFILE</div>
+              <span class="mp-brand-sub">GIMMDA · HILL FITNESS GYM</span>
+            </div>
+          </div>
           <button type="button" class="mp-close" aria-label="Close">×</button>
         </div>
         <div class="mp-identity">
@@ -1468,19 +1503,36 @@
           </div>
         </div>
 
-        ${isOwnerView ? `<div class="mp-card"><div class="mp-card-title">MEMBER PORTAL ACCESS</div>${member.auth_user_id
-          ? '<p class="sub" style="margin:0;line-height:1.7">This member has a portal login and can sign in to view their pass and payment history.</p>'
-          : `<p class="sub" style="margin:0 0 10px;line-height:1.7">This member cannot sign in yet. Create a login below or link an existing account.</p>
-             <div class="modal-two-col" style="align-items:end">
-               <div><label class="field">Account email</label><input class="login-input" id="login-email" type="email" placeholder="member@email.com" value="${esc(member.email || '')}"></div>
-               <div><button type="button" class="login-submit" id="create-login" style="height:40px">Create portal login</button></div>
-             </div>
-             <details style="margin-top:12px"><summary class="sub" style="cursor:pointer">Already have an account for them?</summary>
-               <div class="modal-two-col" style="align-items:end;margin-top:8px">
-                 <div><label class="field">Account email</label><input class="login-input" id="link-email" type="email" placeholder="member@email.com"></div>
-                 <div><button type="button" class="outline" id="link-account" style="height:40px;width:100%">Link existing account</button></div>
-               </div>
-             </details>`}</div>` : ''}
+        <div class="mp-card">
+          <div class="mp-card-title">MEMBER PORTAL ACCESS &amp; PASSWORD <span>${member.auth_user_id ? 'Login active' : 'No login yet'}</span></div>
+          ${member.auth_user_id
+            ? `<p class="sub" style="margin:0 0 10px;line-height:1.6">This member can sign in to the Member Portal${member.email ? ` using <b>${esc(member.email)}</b>` : ''}. Set a new password below if they forgot theirs.</p>
+               <form id="member-password-form">
+                 <label class="field" for="mp-new-password">Change portal password</label>
+                 <div class="mp-pw-grid">
+                   <div class="input-box">
+                     <input class="login-input" id="mp-new-password" type="password" minlength="8" autocomplete="new-password" placeholder="At least 8 characters" required>
+                     <button type="button" class="password-toggle" id="mp-pw-toggle" aria-label="Show password">Show</button>
+                   </div>
+                   <button type="button" class="outline" id="mp-pw-gen">Generate</button>
+                   <button type="submit" class="login-submit" id="mp-pw-save">Update password</button>
+                 </div>
+                 <p class="sub" style="margin:8px 0 0;font-size:10.5px">Minimum 8 characters. Takes effect immediately and signs out old sessions.</p>
+               </form>`
+            : isOwnerView
+              ? `<p class="sub" style="margin:0 0 10px;line-height:1.7">This member cannot sign in yet. Create a login below or link an existing account.</p>
+                 <div class="modal-two-col" style="align-items:end">
+                   <div><label class="field">Account email</label><input class="login-input" id="login-email" type="email" placeholder="member@email.com" value="${esc(member.email || '')}"></div>
+                   <div><button type="button" class="login-submit" id="create-login" style="height:40px">Create portal login</button></div>
+                 </div>
+                 <details style="margin-top:12px"><summary class="sub" style="cursor:pointer">Already have an account for them?</summary>
+                   <div class="modal-two-col" style="align-items:end;margin-top:8px">
+                     <div><label class="field">Account email</label><input class="login-input" id="link-email" type="email" placeholder="member@email.com"></div>
+                     <div><button type="button" class="outline" id="link-account" style="height:40px;width:100%">Link existing account</button></div>
+                   </div>
+                 </details>`
+              : '<p class="sub" style="margin:0;line-height:1.6">This member does not have a portal login linked yet. Ask the owner to create or link one.</p>'}
+        </div>
       </div>`;
 
     document.body.append(box);
@@ -1545,6 +1597,51 @@
       refreshCurrentView();
       rerenderSelf();
     }, box);
+
+    const pwForm = box.querySelector('#member-password-form');
+    if (pwForm) {
+      const pwInput = pwForm.querySelector('#mp-new-password');
+      const pwToggle = pwForm.querySelector('#mp-pw-toggle');
+      const pwGen = pwForm.querySelector('#mp-pw-gen');
+      const pwSave = pwForm.querySelector('#mp-pw-save');
+      if (pwToggle && pwInput) {
+        pwToggle.onclick = () => {
+          const show = pwInput.type === 'password';
+          pwInput.type = show ? 'text' : 'password';
+          pwToggle.textContent = show ? 'Hide' : 'Show';
+        };
+      }
+      if (pwGen && pwInput) {
+        pwGen.onclick = () => {
+          pwInput.value = randomTempPassword().slice(0, 10);
+          pwInput.type = 'text';
+          if (pwToggle) pwToggle.textContent = 'Hide';
+          pwInput.focus();
+          pwInput.select();
+        };
+      }
+      pwForm.onsubmit = async event => {
+        event.preventDefault();
+        const nextPw = pwInput.value;
+        if (nextPw.length < 8) return toastLive('Password must be at least 8 characters.');
+        pwSave.disabled = true;
+        const prevLabel = pwSave.textContent;
+        pwSave.textContent = 'Updating…';
+        try {
+          await ui.call('set_member_password', { p_member_id: member.id, p_new_password: nextPw });
+          toastLive(`Portal password updated for ${member.full_name}.`);
+          pwInput.value = '';
+          pwInput.type = 'password';
+          if (pwToggle) pwToggle.textContent = 'Show';
+          await refreshData(true);
+        } catch (error) {
+          toastLive(friendly(error));
+        } finally {
+          pwSave.disabled = false;
+          pwSave.textContent = prevLabel;
+        }
+      };
+    }
 
     const createButton = box.querySelector('#create-login');
     if (createButton) createButton.onclick = async () => {
@@ -1894,15 +1991,18 @@
       <div class="rp-mid">
         <section class="card owner-directory">
           <div class="panel-head"><div><div class="staff-kicker">ACCESS CONTROL</div><h3>Team accounts</h3><p>Owner and staff accounts come from Supabase Auth.</p></div></div>
-          <div id="team-list">${staff.map(t => `<div class="team-account"><div class="team-person"><span class="team-avatar">${esc(initials(t.full_name || t.email))}</span><div><strong>${esc(t.full_name || 'Unnamed account')}</strong><small>${esc(t.email || '')}</small></div></div><select class="login-input team-role" data-id="${t.id}" aria-label="Role for ${esc(t.email || 'account')}" ${t.id === live.profile.id ? 'disabled' : ''}><option value="owner" ${t.role === 'owner' ? 'selected' : ''}>Owner</option><option value="staff" ${t.role === 'staff' ? 'selected' : ''}>Staff</option><option value="member" ${t.role === 'member' ? 'selected' : ''}>Member</option></select><span class="status-tag ${t.is_active ? '' : 'status-deactivated'}">${t.is_active ? 'Active' : 'Deactivated'}</span>${t.id === live.profile.id || t.role === 'owner' ? '<span></span>' : `<div class="team-actions"><button class="outline team-perms" data-id="${t.id}">Permissions</button><button class="outline team-reset" data-id="${t.id}">Reset password</button><button class="outline team-toggle" data-id="${t.id}" data-active="${t.is_active}">${t.is_active ? 'Deactivate' : 'Activate'}</button></div>`}</div>`).join('') || '<p class="sub">No accounts yet.</p>'}</div>
+          <div id="team-list">${staff.map(t => `<div class="team-account"><div class="team-person"><span class="team-avatar">${esc(initials(t.full_name || t.email))}</span><div><strong>${esc(t.full_name || 'Unnamed account')}</strong><small>${esc(t.email || '')}</small></div></div><select class="login-input team-role" data-id="${t.id}" aria-label="Role for ${esc(t.email || 'account')}" ${t.id === live.profile.id ? 'disabled' : ''}><option value="owner" ${t.role === 'owner' ? 'selected' : ''}>Owner</option><option value="staff" ${t.role === 'staff' ? 'selected' : ''}>Staff</option><option value="member" ${t.role === 'member' ? 'selected' : ''}>Member</option></select><span class="status-tag ${t.is_active ? '' : 'status-deactivated'}">${t.is_active ? 'Active' : 'Deactivated'}</span>${t.id === live.profile.id || t.role === 'owner' ? '<span></span>' : `<div class="team-actions"><button class="outline team-perms" data-id="${t.id}">Permissions</button><button class="outline team-reset" data-id="${t.id}">Reset password</button><button class="outline team-toggle" data-id="${t.id}" data-active="${t.is_active}">${t.is_active ? 'Deactivate' : 'Activate'}</button><button class="outline team-delete" data-id="${t.id}">Delete</button></div>`}</div>`).join('') || '<p class="sub">No accounts yet.</p>'}</div>
           <div class="settings-notice" style="margin-top:14px">✳ &nbsp; Accounts are created in Supabase (Authentication → Users). Set the role here; staff see the staff portal and members use the member portal.</div>
         </section>
 
         <div class="rp-side-stack">
           <aside class="card owner-member-detail">
             <div id="lockouts"></div>
-            <div class="staff-kicker" style="margin-top:16px">TEAM ACTIVITY</div>
-            ${live.activity.slice(0, 12).map(a => `<div class="profile-history"><div>${esc(a.summary)}<small>${esc(a.actor_name || 'Gym')} · ${esc(phDateTime(a.created_at))}</small></div></div>`).join('') || '<p class="sub">No activity yet.</p>'}
+            <div class="team-activity-head">
+              <div class="staff-kicker" style="margin:0">TEAM ACTIVITY</div>
+              ${live.activity.length ? `<button type="button" class="team-view-all" id="team-view-activity">View all (${live.activity.length}) ↗</button>` : ''}
+            </div>
+            <div class="team-activity-scroll">${live.activity.slice(0, 25).map(a => `<div class="team-activity-item"><div>${esc(a.summary)}</div><small>${esc(a.actor_name || 'Gym')} · ${esc(phDateTime(a.created_at))}</small></div>`).join('') || '<p class="sub" style="padding-top:10px">No activity yet.</p>'}</div>
           </aside>
           <section class="card rp-new-card">
             <div class="panel-head"><div><div class="staff-kicker">ROLES AT A GLANCE</div><h3>Who can do what</h3><p>Permissions are enforced by the database, not just hidden on screen.</p></div></div>
@@ -1912,6 +2012,10 @@
           </section>
         </div>
       </div>`;
+    ownerContent.querySelector('#team-view-activity')?.addEventListener('click', () => {
+      const btn = [...ownerNav.querySelectorAll('button')].find(b => b.textContent.trim() === 'Activity');
+      btn?.click();
+    });
     (async () => {
       const box = ownerContent.querySelector('#lockouts');
       if (!box) return;
@@ -1940,6 +2044,32 @@
         await refreshData(true);
         renderOwnerTeam();
       } catch (error) { toastLive(friendly(error)); }
+    });
+    ownerContent.querySelectorAll('.team-delete').forEach(button => button.onclick = async () => {
+      const account = live.team.find(t => t.id === button.dataset.id);
+      if (!account) return;
+      const label = account.full_name || account.email || 'this staff member';
+      const ok = await confirmDialog({
+        title: `Delete ${label}?`,
+        body: `This permanently deletes <b>${esc(label)}</b>${account.email ? ` (${esc(account.email)})` : ''}'s staff account and signs them out immediately. Past payments, check-ins, and activity logs they recorded are preserved.<br><br>Use <b>Deactivate</b> if you only want to block sign-in temporarily.`,
+        confirm: 'Delete staff'
+      });
+      if (!ok) return;
+      button.disabled = true;
+      const prev = button.textContent;
+      button.textContent = 'Deleting…';
+      try {
+        const res = await sb.functions.invoke('delete-staff', { body: { user_id: account.id } });
+        if (res.error) throw res.error;
+        if (res.data?.error) throw new Error(res.data.detail || res.data.error);
+        toastLive(`${label} deleted.`);
+        await refreshData(true);
+        renderOwnerTeam();
+      } catch (error) {
+        toastLive(friendly(error));
+        button.disabled = false;
+        button.textContent = prev;
+      }
     });
     ownerContent.querySelectorAll('.team-role').forEach(select => select.onchange = async () => {
       try {
@@ -2317,9 +2447,51 @@
 
   function renderOwnerSettings() {
     const setting = live.settings || {};
+    const who = currentIdentity();
+    const rawName = (live.profile?.full_name || who.label || '').trim();
+    const nameParts = rawName.split(/\s+/).filter(Boolean);
+    const curFirst = nameParts.length ? nameParts[0] : '';
+    const curLast = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
     ownerContent.innerHTML = `
-      <div class="rp-head"><div><div class="eyebrow" style="color:#8ba284">YOUR GYM, YOUR SETTINGS</div><h2>Settings</h2><p>Membership pricing, portal payment options, receipts, and system health.</p></div></div>
+      <div class="rp-head"><div><div class="eyebrow" style="color:#8ba284">YOUR GYM, YOUR SETTINGS</div><h2>Settings</h2><p>Owner profile, account password, gym details, and membership pricing.</p></div></div>
       <div class="settings-grid">
+        <div class="settings-col">
+          <section class="card settings-card">
+            <div class="panel-head"><div><div class="staff-kicker">OWNER PROFILE</div><h3>Your account</h3><p>Your last name appears in the dashboard greeting and your initials appear on your profile badge.</p></div><span class="owner-panel-icon">♙</span></div>
+            <div class="owner-settings-profile-banner">
+              <span class="owner-settings-avatar" id="owner-preview-avatar">${esc(who.ini)}</span>
+              <div>
+                <strong id="owner-preview-name">${esc(who.label)}</strong>
+                <small id="owner-preview-greeting">Greeting: “Good day, ${esc(who.last)}.” · ${esc(who.email || '')}</small>
+              </div>
+            </div>
+            <form id="owner-profile-form">
+              <div class="modal-two-col">
+                <div><label class="field" for="owner-first-name">First name</label><input class="login-input" id="owner-first-name" maxlength="60" value="${esc(curFirst)}" placeholder="e.g. Thomas" required></div>
+                <div><label class="field" for="owner-last-name">Last name</label><input class="login-input" id="owner-last-name" maxlength="60" value="${esc(curLast)}" placeholder="e.g. Hizon" required></div>
+              </div>
+              <label class="field" for="owner-account-email">Signed-in email</label>
+              <input class="login-input" id="owner-account-email" value="${esc(who.email || '')}" disabled style="background:#f5f7f3;color:#738376">
+              <div class="settings-save-line"><p>Changes update your greeting and profile initials everywhere.</p><button type="submit" class="login-submit" id="save-owner-profile">Save profile ↗</button></div>
+            </form>
+          </section>
+
+          <section class="card settings-card">
+            <div class="panel-head"><div><div class="staff-kicker">ACCOUNT SECURITY</div><h3>Change password</h3><p>Update the password you use to sign in to the owner dashboard.</p></div><span class="owner-panel-icon">✳</span></div>
+            <form id="owner-password-form">
+              <label class="field" for="owner-new-pw">New password</label>
+              <div class="input-box">
+                <input class="login-input" id="owner-new-pw" type="password" minlength="8" autocomplete="new-password" placeholder="At least 8 characters" required>
+                <button type="button" class="password-toggle" id="owner-pw-toggle">Show</button>
+              </div>
+              <label class="field" for="owner-confirm-pw">Confirm new password</label>
+              <input class="login-input" id="owner-confirm-pw" type="password" minlength="8" autocomplete="new-password" placeholder="Re-enter your new password" required>
+              <div class="settings-save-line"><p>Minimum 8 characters. Takes effect right away.</p><button type="submit" class="outline" id="save-owner-pw">Update password</button></div>
+            </form>
+          </section>
+        </div>
+
         <div class="settings-col">
           <section class="card settings-card">
             <div class="panel-head"><div><div class="staff-kicker">MEMBERSHIP PLANS</div><h3>Set your pricing</h3><p>Prices prefill staff renewals. Amounts are in Philippine pesos.</p></div><span class="owner-panel-icon">₱</span></div>
@@ -2331,71 +2503,104 @@
           </section>
 
           <section class="card settings-card">
-            <div class="panel-head"><div><div class="staff-kicker">DIAGNOSTICS</div><h3>System health</h3><p>Live database link, offline queue, and recent client errors.</p></div><span class="settings-status-pill">${navigator.onLine ? 'Online' : 'Offline'}</span></div>
-            <div id="sys-health"><p class="sub">Checking…</p></div>
-            <div class="settings-save-line"><p>Queued offline actions sync automatically when online.</p><button type="button" class="outline" id="flush-queue">Send queued actions</button></div>
-            <div class="settings-notice">✳ &nbsp; Walk-ins stay separate from membership revenue.</div>
-          </section>
-        </div>
-
-        <div class="settings-col">
-          <section class="card settings-card">
-            <div class="panel-head"><div><div class="staff-kicker">SHARED WITH BOTH PORTALS</div><h3>Member portal payments</h3><p>Accepted methods when members upload payment proof for verification.</p></div><span class="owner-panel-icon">◇</span></div>
-            <div class="settings-method-list">
-              ${[['GCash', 'GCash'], ['Bank transfer', 'Bank transfer'], ['E-wallet', 'E-wallet'], ['Other', 'Other']].map(([id, label]) => `<label class="settings-method-item"><input type="checkbox" class="portal-method" value="${id}" ${(setting.member_payment_methods || []).some(m => m.id === id) ? 'checked' : ''}><span class="cash-check" aria-hidden="true">✓</span><span>${label}</span></label>`).join('')}
-            </div>
-            <div class="settings-save-line"><p>Proof uploads still wait for your verification.</p><button type="button" class="outline" id="save-methods">Save payment methods</button></div>
-          </section>
-
-          <section class="card settings-card">
-            <div class="panel-head"><div><div class="staff-kicker">OFFICIAL RECEIPTS</div><h3>Receipt header &amp; tax</h3><p>Printed on every official receipt. Leave the TIN blank until registered.</p></div><span class="owner-panel-icon">▤</span></div>
-            <div class="settings-receipt-grid">
-              <div class="span-2"><label class="field" for="biz-address">Business address</label><input class="login-input" id="biz-address" maxlength="160" value="${esc(setting.business_address || '')}" placeholder="e.g. 12 Hill St, Pasig City"></div>
-              <div><label class="field" for="biz-tin">TIN <em style="font-style:normal;color:#99a89a">(optional)</em></label><input class="login-input" id="biz-tin" maxlength="30" value="${esc(setting.tin || '')}" placeholder="000-000-000-00000"></div>
-              <div><label class="field" for="biz-rate">VAT rate (%)</label><input class="login-input" id="biz-rate" type="number" min="0" max="30" step="0.01" value="${Number(setting.vat_rate ?? 12)}"></div>
-              <div class="span-2"><label class="cash-confirm"><input type="checkbox" id="biz-vat" ${setting.vat_registered ? 'checked' : ''}><span class="cash-check" aria-hidden="true">✓</span><span>VAT registered — show VAT breakdown on receipts</span></label></div>
-              <div class="span-2"><label class="field" for="biz-footer">Receipt footer</label><input class="login-input" id="biz-footer" maxlength="160" value="${esc(setting.receipt_footer || '')}" placeholder="Thank you. Train hard, recover harder."></div>
-            </div>
-            <div class="settings-save-line"><p>Updates receipt headers across all future checkouts.</p><button type="button" class="outline" id="save-biz">Save receipt details</button></div>
+            <div class="panel-head"><div><div class="staff-kicker">GYM INFORMATION</div><h3>Branch details</h3><p>Basic gym name and location shown across your workspace.</p></div><span class="owner-panel-icon">▤</span></div>
+            <form id="gym-info-form">
+              <label class="field" for="gym-display-name">Gym name</label>
+              <input class="login-input" id="gym-display-name" maxlength="80" value="${esc(setting.gym_name || 'Hill Fitness Gym')}" placeholder="Hill Fitness Gym" required>
+              <label class="field" for="gym-branch-address">Branch address</label>
+              <input class="login-input" id="gym-branch-address" maxlength="160" value="${esc(setting.business_address || '')}" placeholder="e.g. Pasig City">
+              <div class="settings-save-line"><p>Updates your gym name in the header.</p><button type="submit" class="outline" id="save-gym-info">Save gym details</button></div>
+            </form>
           </section>
         </div>
       </div>`;
-    ownerContent.querySelector('#save-methods').onclick = async () => {
-      const chosen = [...ownerContent.querySelectorAll('.portal-method:checked')].map(input => ({ id: input.value, name: input.value }));
-      try {
-        await sb.from('gym_settings').update({ member_payment_methods: chosen }).eq('id', true);
-        toastLive(chosen.length ? 'Member portal payment methods saved.' : 'No portal methods enabled — member proof submission is now unavailable.');
-        await refreshData(true);
-      } catch (error) { toastLive(friendly(error)); }
+
+    const firstInput = ownerContent.querySelector('#owner-first-name');
+    const lastInput = ownerContent.querySelector('#owner-last-name');
+    const previewAvatar = ownerContent.querySelector('#owner-preview-avatar');
+    const previewName = ownerContent.querySelector('#owner-preview-name');
+    const previewGreeting = ownerContent.querySelector('#owner-preview-greeting');
+    const syncPreview = () => {
+      const f = firstInput.value.trim();
+      const l = lastInput.value.trim();
+      const combined = [f, l].filter(Boolean).join(' ') || who.email || 'Account';
+      const parts = combined.split(/\s+/).filter(Boolean);
+      const lastWord = parts.length > 1 ? parts[parts.length - 1] : (parts[0] || 'there');
+      const ini = parts.length > 1
+        ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+        : (parts[0]?.[0] || '?').toUpperCase();
+      if (previewAvatar) previewAvatar.textContent = ini;
+      if (previewName) previewName.textContent = combined;
+      if (previewGreeting) previewGreeting.textContent = `Greeting: “Good day, ${lastWord}.” · ${who.email || ''}`;
     };
-    (async () => {
-      const box = ownerContent.querySelector('#sys-health');
-      const queued = readQueue().length;
-      const { data: errs } = await sb.from('client_errors').select('id,message,created_at').order('created_at', { ascending: false }).limit(5);
-      box.innerHTML = `<div class="profile-line"><span>Connection</span><strong>${navigator.onLine ? 'Online' : 'Offline'}</strong></div>
-        <div class="profile-line"><span>Queued actions</span><strong>${queued}</strong></div>
-        <div class="profile-line"><span>Reported errors</span><strong>${(errs || []).length}</strong></div>
-        ${(errs || []).length ? `<div class="sys-errors">${errs.map(e => `<div><small>${esc(phDateTime(e.created_at))}</small> ${esc(String(e.message).slice(0, 90))}</div>`).join('')}</div>` : ''}`;
-    })();
-    ownerContent.querySelector('#flush-queue').onclick = async () => {
-      const sent = await flushQueue();
-      if (!sent) toastLive('Nothing queued.');
-      renderOwnerSettings();
-    };
-    ownerContent.querySelector('#save-biz').onclick = async () => {
+    firstInput?.addEventListener('input', syncPreview);
+    lastInput?.addEventListener('input', syncPreview);
+
+    ownerContent.querySelector('#owner-profile-form').onsubmit = async event => {
+      event.preventDefault();
+      const f = firstInput.value.trim();
+      const l = lastInput.value.trim();
+      if (!f || !l) return toastLive('Please enter both first name and last name.');
+      const fullName = `${f} ${l}`.replace(/\s+/g, ' ').trim();
+      const saveBtn = ownerContent.querySelector('#save-owner-profile');
+      saveBtn.disabled = true;
+      const prevText = saveBtn.textContent;
+      saveBtn.textContent = 'Saving…';
       try {
-        await sb.from('gym_settings').update({
-          business_address: ownerContent.querySelector('#biz-address').value.trim() || null,
-          tin: ownerContent.querySelector('#biz-tin').value.trim() || null,
-          vat_rate: Number(ownerContent.querySelector('#biz-rate').value || 0),
-          vat_registered: ownerContent.querySelector('#biz-vat').checked,
-          receipt_footer: ownerContent.querySelector('#biz-footer').value.trim() || null
-        }).eq('id', true);
-        toastLive('Receipt details saved.');
+        const { error: profErr } = await sb.from('profiles').update({ full_name: fullName }).eq('id', live.profile.id);
+        if (profErr) throw profErr;
+        try { await sb.auth.updateUser({ data: { full_name: fullName } }); } catch (_) { /* optional metadata sync */ }
+        live.profile = { ...live.profile, full_name: fullName };
+        if (live.session?.user) {
+          live.session.user.user_metadata = { ...(live.session.user.user_metadata || {}), full_name: fullName };
+        }
+        paintGreeting();
+        toastLive('Owner profile updated.');
         await refreshData(true);
         renderOwnerSettings();
-      } catch (error) { toastLive(friendly(error)); }
+      } catch (error) {
+        toastLive(friendly(error));
+        saveBtn.disabled = false;
+        saveBtn.textContent = prevText;
+      }
     };
+
+    const pwToggle = ownerContent.querySelector('#owner-pw-toggle');
+    const pwNew = ownerContent.querySelector('#owner-new-pw');
+    const pwConfirm = ownerContent.querySelector('#owner-confirm-pw');
+    if (pwToggle && pwNew) {
+      pwToggle.onclick = () => {
+        const show = pwNew.type === 'password';
+        pwNew.type = show ? 'text' : 'password';
+        if (pwConfirm) pwConfirm.type = show ? 'text' : 'password';
+        pwToggle.textContent = show ? 'Hide' : 'Show';
+      };
+    }
+
+    ownerContent.querySelector('#owner-password-form').onsubmit = async event => {
+      event.preventDefault();
+      const p1 = pwNew.value;
+      const p2 = pwConfirm.value;
+      if (p1.length < 8) return toastLive('Password must be at least 8 characters.');
+      if (p1 !== p2) return toastLive('Passwords do not match.');
+      const btn = ownerContent.querySelector('#save-owner-pw');
+      btn.disabled = true;
+      const prev = btn.textContent;
+      btn.textContent = 'Updating…';
+      try {
+        const { error } = await sb.auth.updateUser({ password: p1 });
+        if (error) throw error;
+        pwNew.value = '';
+        pwConfirm.value = '';
+        toastLive('Your password has been updated.');
+      } catch (error) {
+        toastLive(friendly(error));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    };
+
     ownerContent.querySelector('#live-plans-form').onsubmit = async event => {
       event.preventDefault();
       try {
@@ -2405,6 +2610,22 @@
         const fee = ownerContent.querySelector('#live-walkin').value;
         await sb.from('gym_settings').update({ walkin_fee: fee === '' ? null : Number(fee) }).eq('id', true);
         toastLive('Pricing saved for all staff.');
+        await refreshData(true);
+        renderOwnerSettings();
+      } catch (error) { toastLive(friendly(error)); }
+    };
+
+    ownerContent.querySelector('#gym-info-form').onsubmit = async event => {
+      event.preventDefault();
+      const gymName = ownerContent.querySelector('#gym-display-name').value.trim();
+      const address = ownerContent.querySelector('#gym-branch-address').value.trim() || null;
+      if (!gymName) return toastLive('Gym name is required.');
+      try {
+        const { error } = await sb.from('gym_settings').update({ gym_name: gymName, business_address: address }).eq('id', true);
+        if (error) throw error;
+        live.settings = { ...(live.settings || {}), gym_name: gymName, business_address: address };
+        paintGreeting();
+        toastLive('Gym details saved.');
         await refreshData(true);
         renderOwnerSettings();
       } catch (error) { toastLive(friendly(error)); }
@@ -3613,7 +3834,31 @@ ${change !== undefined && change !== null ? `<tr><td>Change</td><td class="r">${
           p_to: ownerContent.querySelector('#log-to').value || null,
           p_limit: 200
         });
-        box.innerHTML = rows.length ? `<div class="log-list">${rows.map(r => `<div class="log-row"><span class="log-kind">${esc(String(r.kind||'').replace(/_/g,' '))}</span><div><strong>${esc(r.summary)}</strong><small>${esc(r.actor_name || 'Gym')} · ${esc(phDateTime(r.created_at))}</small></div></div>`).join('')}</div>` : '<p class="sub">No entries match that search.</p>';
+        const PAGE_SIZE = 15;
+        let page = 1;
+        const drawLogs = () => {
+          if (!rows.length) {
+            box.innerHTML = '<p class="sub">No entries match that search.</p>';
+            return;
+          }
+          const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+          page = Math.max(1, Math.min(page, pages));
+          const start = (page - 1) * PAGE_SIZE;
+          const slice = rows.slice(start, start + PAGE_SIZE);
+          box.innerHTML = `<div class="log-list">${slice.map(r => `<div class="log-row"><span class="log-kind">${esc(String(r.kind||'').replace(/_/g,' '))}</span><div><strong>${esc(r.summary)}</strong><small>${esc(r.actor_name || 'Gym')} · ${esc(phDateTime(r.created_at))}</small></div></div>`).join('')}</div>
+            ${pages > 1 ? `<div class="owner-pager" id="log-pager">
+              <span class="owner-pager-count">Showing ${start + 1}–${Math.min(start + PAGE_SIZE, rows.length)} of ${rows.length}</span>
+              <div class="owner-pager-buttons">
+                <button class="outline log-page-prev" type="button" ${page <= 1 ? 'disabled' : ''}>‹ Prev</button>
+                <span class="owner-pager-pages">${Array.from({ length: pages }, (_, i) => i + 1).filter(p => p === 1 || p === pages || Math.abs(p - page) <= 1).map((p, idx, arr) => `${idx && p - arr[idx - 1] > 1 ? '<span class="owner-pager-gap">…</span>' : ''}<button type="button" class="owner-page-num ${p === page ? 'is-current' : ''}" data-page="${p}">${p}</button>`).join('')}</span>
+                <button class="outline log-page-next" type="button" ${page >= pages ? 'disabled' : ''}>Next ›</button>
+              </div>
+            </div>` : ''}`;
+          box.querySelector('.log-page-prev')?.addEventListener('click', () => { page -= 1; drawLogs(); });
+          box.querySelector('.log-page-next')?.addEventListener('click', () => { page += 1; drawLogs(); });
+          box.querySelectorAll('.owner-page-num').forEach(b => b.addEventListener('click', () => { page = Number(b.dataset.page); drawLogs(); }));
+        };
+        drawLogs();
         const exportBtn = ownerContent.querySelector('#log-export');
         if (exportBtn) exportBtn.onclick = () => downloadCsv('gimmda-activity.csv', [['When','Type','Who','What'], ...rows.map(r => [phDateTime(r.created_at), r.kind, r.actor_name||'', r.summary])]);
       } catch (error) { box.innerHTML = `<p class="sub">${esc(friendly(error))}</p>`; }
