@@ -74,7 +74,11 @@ function friendly(error) {
     CANNOT_DEMOTE_SELF: 'You can’t remove your own owner access.',
     ALREADY_REVIEWED: 'This was already reviewed.',
     PRODUCT_NOT_FOUND: 'That product no longer exists.',
-    MEMBER_NOT_FOUND: 'Member not found.'
+    MEMBER_NOT_FOUND: 'Member not found.',
+    NAME_REQUIRED: 'Full name is required.',
+    EMAIL_IN_USE: 'That email address is already used by another account.',
+    PASSWORD_TOO_SHORT: 'Password must be at least 8 characters.',
+    PERMISSION_DENIED: 'Your account doesn’t have permission for this action. Ask the owner.'
   };
   const msg = String(error?.message || error || '');
   for (const key of Object.keys(map)) if (msg.includes(key)) return msg.includes('INSUFFICIENT_STOCK:') ? `Not enough stock for ${msg.split(':')[1]}.` : map[key];

@@ -262,7 +262,16 @@
   const staffContent = document.querySelector('#staff-content');
   const signOutButton = document.querySelector('#signout');
   const staffSignOut = document.querySelector('#staff-signout');
+  const profileButton = document.querySelector('#profile-button');
+  const staffProfileButton = document.querySelector('#staff-profile-button');
+  const closeAccountMenus = () => {
+    if (signOutButton) signOutButton.hidden = true;
+    if (staffSignOut) staffSignOut.hidden = true;
+    profileButton?.setAttribute('aria-expanded', 'false');
+    staffProfileButton?.setAttribute('aria-expanded', 'false');
+  };
   const signOut = async () => {
+    closeAccountMenus();
     await sb.auth.signOut();
     loginScreen.hidden = false;
     ownerShell.hidden = true;
@@ -279,11 +288,23 @@
   staffSignOut?.addEventListener('click', signOut);
 
   /* Account menu + toolbar controls (the sample app used to wire these) */
-  const profileButton = document.querySelector('#profile-button');
-  profileButton?.addEventListener('click', () => {
+  profileButton?.addEventListener('click', event => {
+    event.stopPropagation();
     if (!signOutButton) return;
     signOutButton.hidden = !signOutButton.hidden;
     profileButton.setAttribute('aria-expanded', String(!signOutButton.hidden));
+  });
+  staffProfileButton?.addEventListener('click', event => {
+    event.stopPropagation();
+    if (!staffSignOut) return;
+    staffSignOut.hidden = !staffSignOut.hidden;
+    staffProfileButton.setAttribute('aria-expanded', String(!staffSignOut.hidden));
+  });
+  document.addEventListener('click', event => {
+    if (!event.target.closest?.('.topright')) closeAccountMenus();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeAccountMenus();
   });
   const syncMotion = on => {
     document.querySelectorAll('.motion-control').forEach(item => {
@@ -1260,7 +1281,7 @@
 
       <div class="rp-mid">
         <section class="card owner-directory">
-          <div class="panel-head"><div><div class="staff-kicker">MEMBERS AT A GLANCE</div><h3>All members</h3><p>Newest members first. Select a member for full details.</p></div><button class="outline" id="owner-export">Export CSV ↓</button></div>
+          <div class="panel-head"><div><div class="staff-kicker">MEMBERS AT A GLANCE</div><h3>All members</h3><p>Newest members first. Select a member for full details.</p></div><div class="owner-dir-actions"><button class="outline" id="owner-export">Export CSV ↓</button><button class="login-submit" id="owner-add" type="button" style="width:auto;height:34px;padding:0 15px;font-size:11px">+ Add member</button></div></div>
           <div class="owner-member-controls"><input class="login-input" id="owner-search" placeholder="Search name, ID, phone or email"><select class="login-input" id="owner-filter"><option value="all">All members</option><option value="active">Active</option><option value="deactivated">Deactivated</option><option value="expiring">Expiring soon</option></select></div>
           <div class="owner-member-list" id="owner-member-list"></div>
           <p id="owner-empty" class="sub" hidden>No members match your search.</p>
@@ -1352,6 +1373,8 @@
     nextBtn.onclick = () => { page += 1; renderPage(); };
     search.oninput = () => { page = 1; renderPage(); };
     filter.onchange = () => { page = 1; renderPage(); };
+    const ownerAddBtn = ownerContent.querySelector('#owner-add');
+    if (ownerAddBtn) ownerAddBtn.onclick = () => addMemberLive(() => renderOwnerMembers());
     ownerContent.querySelector('#owner-export').onclick = exportMembers;
     renderPage();
   }
@@ -1368,15 +1391,21 @@
     const visits = live.visits.filter(v => v.member_id === id).slice(0, 6);
     const detail = ownerContent.querySelector('#owner-detail');
     detail.innerHTML = `<div class="staff-kicker">MEMBER PROFILE</div>
-      <div class="profile-heading"><span class="owner-profile-symbol">${esc(initials(member.full_name))}</span><div><h3>${esc(member.full_name)}</h3><p>${esc(member.member_no)} · joined ${esc(fmtDay(member.joined_on))}</p></div><span class="status-tag ${member.effective_status === 'Deactivated' ? 'status-deactivated' : member.expiring_soon ? 'status-expiring' : ''}">${member.effective_status}</span></div>
+      <div class="profile-heading">${memberAvatar(member, 'owner-member-avatar owner-profile-symbol')}<div><h3>${esc(member.full_name)}</h3><p>${esc(member.member_no)} · joined ${esc(fmtDay(member.joined_on))}</p></div><span class="status-tag ${member.effective_status === 'Deactivated' ? 'status-deactivated' : member.expiring_soon ? 'status-expiring' : ''}">${member.effective_status}</span></div>
       <div class="profile-section"><div class="profile-section-title">MEMBERSHIP <span>${esc(member.plan_months ? planLabel(member.plan_months) : 'No plan')}</span></div>
         <div class="profile-line"><span>Start</span><strong>${esc(fmtDay(member.starts_on))}</strong></div>
         <div class="profile-line"><span>Expiry</span><strong>${esc(fmtDay(member.expires_on))}</strong></div>
         <div class="profile-line"><span>Reminders</span><strong>${member.reminders ? 'On' : 'Off'}</strong></div></div>
-      <div class="profile-section"><div class="profile-section-title">CONTACT</div>
-        <div class="profile-line"><span>Mobile</span><strong>${esc(dash(member.phone))}</strong></div>
-        <div class="profile-line"><span>Email</span><strong>${esc(dash(member.email))}</strong></div>
-        <div class="profile-line"><span>Emergency</span><strong>${esc(dash(member.emergency_contact))}</strong></div></div>
+      <div class="profile-section"><div class="profile-section-title">CONTACT &amp; DETAILS</div>
+        <form id="owner-edit-member">
+          <label class="field">Full name</label><input class="login-input oe-name" value="${esc(member.full_name)}" required maxlength="100">
+          <label class="field">Mobile</label><input class="login-input oe-phone" value="${esc(member.phone || '')}" maxlength="30">
+          <label class="field">Email</label><input class="login-input oe-email" type="email" value="${esc(member.email || '')}">
+          <label class="field">Address</label><input class="login-input oe-address" value="${esc(member.address || '')}" maxlength="200">
+          <label class="field">Emergency contact</label><input class="login-input oe-emergency" value="${esc(member.emergency_contact || '')}" maxlength="100">
+          <button class="outline" type="submit" style="margin-top:12px">Save changes</button>
+        </form>
+      </div>
       <div class="profile-section"><div class="profile-section-title">RECENT PAYMENTS</div>${payments.length ? payments.map(p => `<div class="profile-history"><div>${esc(p.receipt_no)}<small>${esc(phDateTime(p.created_at))} · ${esc(p.method)} · ${esc(p.status)}</small></div><b>${peso(p.amount)}</b></div>`).join('') : '<p class="sub">No payments recorded.</p>'}</div>
       <div class="profile-section"><div class="profile-section-title">RECENT VISITS</div>${visits.length ? visits.map(v => `<div class="profile-history"><div>${esc(phDateTime(v.checked_in_at))}<small>${v.checked_out_at ? 'Out ' + esc(phDateTime(v.checked_out_at)) : 'Still inside'}</small></div></div>`).join('') : '<p class="sub">No visits recorded.</p>'}</div>
       ${memberActionsSection(member)}
@@ -1389,6 +1418,25 @@
            <details style="margin-top:14px"><summary class="sub" style="cursor:pointer">Already have an account for them?</summary>
              <label class="field" style="margin-top:10px">Account email</label><input class="login-input" id="link-email" type="email" placeholder="member@email.com"><button class="outline" id="link-account" style="margin-top:10px">Link existing account</button>
            </details>`}</div>`;
+    const oeForm = detail.querySelector('#owner-edit-member');
+    if (oeForm) oeForm.onsubmit = async event => {
+      event.preventDefault();
+      const fullName = oeForm.querySelector('.oe-name').value.trim();
+      if (!fullName) return toastLive('Full name is required.');
+      try {
+        await ui.call('update_member_details', {
+          p_member_id: member.id,
+          p_full_name: fullName,
+          p_phone: oeForm.querySelector('.oe-phone').value.trim() || null,
+          p_email: oeForm.querySelector('.oe-email').value.trim() || null,
+          p_address: oeForm.querySelector('.oe-address').value.trim() || null,
+          p_emergency_contact: oeForm.querySelector('.oe-emergency').value.trim() || null
+        });
+        toastLive('Member changes saved.');
+        await refreshData(true);
+        showOwnerMember(member.id);
+      } catch (error) { toastLive(friendly(error)); }
+    };
     wireMemberActions(member, () => { const still = live.members.find(m => m.id === member.id); if (still) showOwnerMember(still.id); else renderOwnerMembers(); });
     const createButton = detail.querySelector('#create-login');
     if (createButton) createButton.onclick = async () => {
@@ -1480,7 +1528,8 @@
       : `<div class="member-act-grid">
           <button class="outline member-act" id="act-freeze">Freeze / hold</button>
           <button class="outline member-act" id="act-merge">Merge duplicate</button>
-          <button class="outline member-act member-act-danger" id="act-archive">Archive</button>
+          <button class="outline member-act" id="act-archive">Archive</button>
+          <button class="outline member-act member-act-danger" id="act-delete">Delete member</button>
         </div>`}
     </div>`;
   }
@@ -1551,6 +1600,21 @@
     };
     const merge = detail.querySelector('#act-merge');
     if (merge) merge.onclick = () => mergeDialog(member, rerender);
+    const delBtn = detail.querySelector('#act-delete');
+    if (delBtn) delBtn.onclick = async () => {
+      const ok = await confirmDialog({
+        title: `Delete ${member.full_name}?`,
+        body: `This permanently deletes <b>${esc(member.full_name)}</b> (${esc(member.member_no)}), their attendance visits, and passes. This cannot be undone — use <b>Archive</b> if you want to keep the profile.<br><br>Proceed with permanent deletion?`,
+        confirm: 'Delete permanently'
+      });
+      if (!ok) return;
+      try {
+        await ui.call('delete_member', { p_member_id: member.id, p_reason: 'Deleted from dashboard' });
+        toastLive(`${member.full_name} deleted.`);
+        await refreshData(true);
+        renderOwnerMembers();
+      } catch (error) { toastLive(friendly(error)); }
+    };
   }
 
   function freezeDialog(member, rerender) {
@@ -2234,8 +2298,7 @@
     const active = staffNav.querySelector('button.active');
     const view = tab || active?.dataset.staffTab || 'overview';
     if (view === 'members') renderStaffMembers();
-    else if (view === 'walkins') renderStaffWalkins();
-    else if (view === 'checkins') renderStaffCheckins();
+    else if (view === 'checkins' || view === 'walkins') renderStaffCheckins();
     else if (view === 'inventory') renderStaffInventory();
     else renderStaffOverview();
     revealNavigation(staffNav);
@@ -2267,6 +2330,7 @@
     const firstName = (live.profile.full_name || (live.profile.email || '').split('@')[0] || 'there').trim().split(' ')[0];
     staffShell.querySelector('.intro h1').innerHTML = `Good day, <em>${esc(firstName)}.</em>`;
     staffShell.querySelector('.avatar').textContent = currentIdentity().ini;
+    staffShell.querySelector('.avatar').title = currentIdentity().label;
     const myShifts = (live.shifts || []).filter(sh => sh.staff_id === live.profile.id);
     const clockedIn = myShifts.find(sh => !sh.clocked_out_at);
     const attention = live.members.filter(m => m.expiring_soon || (m.expired && m.status === 'Active')).slice(0, 6);
@@ -2387,7 +2451,7 @@
     };
     search.oninput = draw;
     draw();
-    staffContent.querySelector('#staff-add').onclick = addMemberLive;
+    staffContent.querySelector('#staff-add').onclick = () => addMemberLive(() => renderStaffMembers());
   }
 
   function openStaffMember(id) {
@@ -2405,7 +2469,7 @@
           <div>
             <div class="staff-kicker" style="margin-bottom:3px">${esc(member.member_no)}</div>
             <h3 style="margin:0;font:700 17px Manrope,sans-serif;color:#1b2d20">${esc(member.full_name)}</h3>
-            <p class="sub" style="margin:3px 0 0">Changes to member details need owner approval before they apply.</p>
+            <p class="sub" style="margin:3px 0 0">Edit profile details, upload a photo, renew, or manage status directly.</p>
             <div class="staff-profile-photo-actions">
               <label class="outline photo-upload" style="cursor:pointer">${member.photo_url ? 'Change photo' : 'Upload photo'}<input type="file" id="staff-photo-file" accept="image/jpeg,image/png,image/webp" hidden></label>
               ${member.photo_url ? '<button type="button" class="outline" id="staff-photo-remove">Remove photo</button>' : ''}
@@ -2418,8 +2482,8 @@
         <div class="profile-line"><span>Status</span><strong>${esc(member.effective_status)}</strong></div>
         <div class="profile-line"><span>Start</span><strong>${esc(fmtDay(member.starts_on))}</strong></div>
         <div class="profile-line"><span>Expiry</span><strong>${esc(fmtDay(member.expires_on))}</strong></div></div>
-      <div class="renew-actions" style="margin:12px 0"><button class="login-submit renew-now" style="width:auto;padding:0 18px">Record payment / renew ↗</button><button class="outline status-toggle">${member.status === 'Active' ? 'Deactivate member' : 'Reactivate member'}</button></div>
-      <form class="profile-form"><div class="profile-section-title">REQUEST A CHANGE</div><label class="field">Full name</label><input class="login-input p-name" value="${esc(member.full_name)}"><label class="field">Mobile number</label><input class="login-input p-phone" value="${esc(member.phone || '')}"><label class="field">Email</label><input class="login-input p-email" value="${esc(member.email || '')}"><label class="field">Emergency contact</label><input class="login-input p-emergency" value="${esc(member.emergency_contact || '')}"><button class="outline" type="submit" style="margin-top:14px">Send for owner approval</button></form>
+      <div class="renew-actions" style="margin:12px 0;flex-wrap:wrap"><button class="login-submit renew-now" style="width:auto;padding:0 18px">Record payment / renew ↗</button><button class="outline status-toggle">${member.status === 'Active' ? 'Deactivate member' : 'Reactivate member'}</button><button type="button" class="outline member-act-danger staff-delete-member" style="color:#a5423b;border-color:#efd2cf">Delete member</button></div>
+      <form class="profile-form"><div class="profile-section-title">EDIT MEMBER DETAILS</div><label class="field">Full name</label><input class="login-input p-name" value="${esc(member.full_name)}" required maxlength="100"><label class="field">Mobile number</label><input class="login-input p-phone" value="${esc(member.phone || '')}" maxlength="30"><label class="field">Email</label><input class="login-input p-email" type="email" value="${esc(member.email || '')}"><label class="field">Address</label><input class="login-input p-address" value="${esc(member.address || '')}" maxlength="200"><label class="field">Emergency contact</label><input class="login-input p-emergency" value="${esc(member.emergency_contact || '')}" maxlength="100"><button class="login-submit" type="submit" style="margin-top:14px;width:auto;padding:0 20px;height:40px">Save changes</button></form>
       <div class="profile-section"><div class="profile-section-title">PAYMENT HISTORY</div>${payments.length ? payments.map(p => `<div class="profile-history"><div>${esc(p.receipt_no)}<small>${esc(phDateTime(p.created_at))} · ${esc(p.method)} · ${esc(p.status)}</small></div><b>${peso(p.amount)}</b></div>`).join('') : '<p class="sub">No payments recorded.</p>'}</div>
       <div class="profile-section"><div class="profile-section-title">VISITS</div>${visits.slice(0, 8).map(v => `<div class="profile-history"><div>${esc(phDateTime(v.checked_in_at))}<small>${v.checked_out_at ? 'Out ' + esc(phDateTime(v.checked_out_at)) : 'Still inside'}</small></div></div>`).join('') || '<p class="sub">No visits recorded.</p>'}</div>`;
     slot.innerHTML = '';
@@ -2468,71 +2532,222 @@
       if (!ok) return;
       try { await ui.call('set_member_status', { p_member_id: id, p_status: next, p_reason: null }); await refreshData(true); openStaffMember(id); } catch (error) { toastLive(friendly(error)); }
     };
+    const staffDelBtn = form.querySelector('.staff-delete-member');
+    if (staffDelBtn) staffDelBtn.onclick = async () => {
+      const ok = await confirmDialog({
+        title: `Delete ${member.full_name}?`,
+        body: `This permanently removes <b>${esc(member.full_name)}</b> (${esc(member.member_no)}), their check-ins, and passes. This cannot be undone.`,
+        confirm: 'Delete permanently'
+      });
+      if (!ok) return;
+      try {
+        await ui.call('delete_member', { p_member_id: id, p_reason: 'Deleted by staff' });
+        toastLive(`${member.full_name} deleted.`);
+        await refreshData(true);
+        renderStaffMembers();
+      } catch (error) { toastLive(friendly(error)); }
+    };
     form.querySelector('.profile-form').onsubmit = async event => {
       event.preventDefault();
-      const changes = {};
       const name = form.querySelector('.p-name').value.trim();
-      const phone = form.querySelector('.p-phone').value.trim();
-      const email = form.querySelector('.p-email').value.trim();
-      const emergency = form.querySelector('.p-emergency').value.trim();
-      if (name && name !== member.full_name) changes.full_name = name;
-      if (phone !== (member.phone || '')) changes.phone = phone;
-      if (email !== (member.email || '')) changes.email = email;
-      if (emergency !== (member.emergency_contact || '')) changes.emergency_contact = emergency;
-      if (!Object.keys(changes).length) return toastLive('No changes to send.');
+      if (!name) return toastLive('Full name is required.');
       try {
-        await ui.call('submit_profile_change', { p_member_id: id, p_changes: changes });
-        toastLive('Change request sent to the owner.');
+        await ui.call('update_member_details', {
+          p_member_id: id,
+          p_full_name: name,
+          p_phone: form.querySelector('.p-phone').value.trim() || null,
+          p_email: form.querySelector('.p-email').value.trim() || null,
+          p_address: form.querySelector('.p-address').value.trim() || null,
+          p_emergency_contact: form.querySelector('.p-emergency').value.trim() || null
+        });
+        toastLive('Changes saved.');
         await refreshData(true);
-        form.querySelector('.profile-form').reset();
+        openStaffMember(id);
       } catch (error) { toastLive(friendly(error)); }
     };
   }
 
-  function addMemberLive() {
-    const slot = staffContent.querySelector('#staff-form-slot');
+  function addMemberLive(onDone) {
     const prices = Object.fromEntries(live.plans.map(p => [p.months, Number(p.price || 0)]));
-    slot.innerHTML = `<form class="staff-table-card"><div class="panel-head"><div><div class="staff-kicker">NEW MEMBER</div><h3>Add a member</h3><p>Creates the member in the shared database and records the payment.</p></div><button type="button" class="outline cancel-add">Cancel</button></div>
-      <label class="field">Full name *</label><input class="login-input" id="m-name" required maxlength="100" placeholder="Member’s full name">
-      <label class="field">Mobile number *</label><input class="login-input" id="m-phone" type="tel" required maxlength="30">
-      <label class="field">Email address</label><input class="login-input" id="m-email" type="email" placeholder="Used later for their member portal account">
-      <label class="field">Membership plan *</label><select class="login-input" id="m-plan">${live.plans.map(p => `<option value="${p.months}" ${p.months === 3 ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select>
-      <label class="field">Start date *</label><input class="login-input" id="m-start" type="date" value="${phToday()}" max="${phToday()}" required>
-      <label class="field">Amount paid (₱) *</label><input class="login-input" id="m-amount" type="number" min="0" step="0.01" required value="${prices[3] || ''}">
-      <label class="field">Payment method *</label><select class="login-input" id="m-method"><option value="Cash">Cash</option><option value="GCash">GCash</option><option value="Bank transfer">Bank transfer</option><option value="E-wallet">E-wallet</option><option value="Other">Other</option></select>
-      <div id="m-ref-wrap" hidden><label class="field">Online transaction reference</label><input class="login-input" id="m-reference" maxlength="100"><p class="sub">Check the gym’s account independently. Online payments stay pending until the owner verifies them.</p></div>
-      <label class="field">Emergency contact</label><input class="login-input" id="m-emergency" maxlength="100">
-      <p class="sub" style="margin:12px 0">Your team gets a member ID automatically — HFG- followed by 6 unique digits, e.g. HFG-235211.</p>
-      <button class="login-submit" style="width:auto;padding:0 22px">Create member ↗</button></form>`;
-    slot.querySelector('.cancel-add').onclick = () => slot.innerHTML = '';
-    slot.querySelector('#m-plan').onchange = event => { slot.querySelector('#m-amount').value = prices[event.target.value] || ''; };
-    slot.querySelector('#m-method').onchange = event => {
+    const box = document.createElement('dialog');
+    box.className = 'renew-dialog add-member-dialog';
+    box.id = 'add-member-dialog';
+    box.innerHTML = `<form class="renew-inner" id="add-member-form" novalidate>
+      <div class="renew-header">
+        <div>
+          <div class="eyebrow" style="color:#87a278">NEW MEMBER</div>
+          <h2>Add a member</h2>
+          <p>Fields marked <span class="req-star">*</span> are required. Creates the member, records payment, and sets up their portal password.</p>
+        </div>
+        <button type="button" class="renew-close" aria-label="Close">×</button>
+      </div>
+
+      <div class="modal-two-col">
+        <div>
+          <label class="field" for="m-name">Full name<span class="req-star">*</span></label>
+          <input class="login-input" id="m-name" required maxlength="100" placeholder="Member’s full name">
+        </div>
+        <div>
+          <label class="field" for="m-phone">Mobile number<span class="req-star">*</span></label>
+          <input class="login-input" id="m-phone" type="tel" required maxlength="30" placeholder="09XX XXX XXXX">
+        </div>
+      </div>
+
+      <div class="modal-two-col">
+        <div>
+          <label class="field" for="m-email">Email address<span class="req-star">*</span></label>
+          <input class="login-input" id="m-email" type="email" required placeholder="member@email.com">
+        </div>
+        <div>
+          <label class="field" for="m-password">Portal password<span class="req-star">*</span></label>
+          <div class="input-box">
+            <input class="login-input" id="m-password" type="password" required minlength="8" autocomplete="new-password" placeholder="Min. 8 characters" style="padding-right:54px">
+            <button type="button" class="password-toggle" id="m-pw-toggle" aria-pressed="false" style="font-size:11px;color:#5e7459;width:auto;padding:0 8px">Show</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-two-col">
+        <div>
+          <label class="field" for="m-plan">Membership plan<span class="req-star">*</span></label>
+          <select class="login-input" id="m-plan" required>${live.plans.map(p => `<option value="${p.months}" ${p.months === 3 ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select>
+        </div>
+        <div>
+          <label class="field" for="m-start">Start date<span class="req-star">*</span></label>
+          <input class="login-input" id="m-start" type="date" value="${phToday()}" max="${phToday()}" required>
+        </div>
+      </div>
+
+      <div class="modal-two-col">
+        <div>
+          <label class="field" for="m-amount">Amount paid (₱)<span class="req-star">*</span></label>
+          <input class="login-input" id="m-amount" type="number" min="0" step="0.01" required value="${prices[3] ?? ''}">
+        </div>
+        <div>
+          <label class="field" for="m-method">Payment method<span class="req-star">*</span></label>
+          <select class="login-input" id="m-method" required><option value="Cash">Cash</option><option value="GCash">GCash</option><option value="Bank transfer">Bank transfer</option><option value="E-wallet">E-wallet</option><option value="Other">Other</option></select>
+        </div>
+      </div>
+
+      <div id="m-ref-wrap" hidden>
+        <label class="field" for="m-reference">Online transaction reference<span class="req-star">*</span></label>
+        <input class="login-input" id="m-reference" maxlength="100" placeholder="Enter transfer / GCash reference">
+        <p class="sub">Check the gym’s account independently. Online payments stay pending until verified.</p>
+      </div>
+
+      <div class="modal-two-col">
+        <div>
+          <label class="field" for="m-address">Address</label>
+          <input class="login-input" id="m-address" maxlength="200" placeholder="Optional">
+        </div>
+        <div>
+          <label class="field" for="m-emergency">Emergency contact</label>
+          <input class="login-input" id="m-emergency" maxlength="100" placeholder="Name &amp; number (optional)">
+        </div>
+      </div>
+
+      <p class="sub" id="m-form-error" role="status" style="color:#b44b4b;margin:12px 0 0;min-height:16px"></p>
+      <p class="renew-hint">A unique member ID (HFG-XXXXXX) is assigned automatically.</p>
+      <div class="renew-actions">
+        <button type="button" class="outline cancel-add">Cancel</button>
+        <button type="submit" class="login-submit" id="m-submit">Create member ↗</button>
+      </div>
+    </form>`;
+
+    document.body.append(box);
+    const close = () => { box.close(); box.remove(); };
+    box.querySelector('.renew-close').onclick = close;
+    box.querySelector('.cancel-add').onclick = close;
+    box.addEventListener('cancel', e => { e.preventDefault(); close(); });
+
+    const errEl = box.querySelector('#m-form-error');
+    const pwInput = box.querySelector('#m-password');
+    const pwToggle = box.querySelector('#m-pw-toggle');
+    pwToggle.onclick = () => {
+      const show = pwInput.type === 'password';
+      pwInput.type = show ? 'text' : 'password';
+      pwToggle.textContent = show ? 'Hide' : 'Show';
+      pwToggle.setAttribute('aria-pressed', String(show));
+      pwInput.focus();
+    };
+
+    box.querySelector('#m-plan').onchange = event => { box.querySelector('#m-amount').value = prices[event.target.value] ?? ''; };
+    box.querySelector('#m-method').onchange = event => {
       const online = event.target.value !== 'Cash';
-      slot.querySelector('#m-ref-wrap').hidden = !online;
-      slot.querySelector('#m-reference').required = online;
+      box.querySelector('#m-ref-wrap').hidden = !online;
+      box.querySelector('#m-reference').required = online;
     };
-    slot.querySelector('form').onsubmit = async event => {
+
+    box.querySelector('#add-member-form').onsubmit = async event => {
       event.preventDefault();
-      const name = slot.querySelector('#m-name').value.trim();
-      const phone = slot.querySelector('#m-phone').value.trim();
-      const email = slot.querySelector('#m-email').value.trim();
-      const plan = Number(slot.querySelector('#m-plan').value);
-      const start = slot.querySelector('#m-start').value;
-      const amount = Number(slot.querySelector('#m-amount').value);
-      const method = slot.querySelector('#m-method').value;
-      const reference = slot.querySelector('#m-reference').value.trim();
-      if (!name || !phone) return toastLive('Name and mobile number are required.');
-      if (method !== 'Cash' && !reference) return toastLive('Enter the online payment reference.');
-      if (!await confirmDialog({ title: 'Create this member?', body: `<b>${esc(name)}</b> · ${esc(planLabel(plan))} · ${peso(amount)} paid by ${esc(method)}.<br><br>Confirm the payment was received before saving.`, confirm: 'Create member' })) return;
+      errEl.textContent = '';
+      const name = box.querySelector('#m-name').value.trim();
+      const phone = box.querySelector('#m-phone').value.trim();
+      const email = box.querySelector('#m-email').value.trim().toLowerCase();
+      const password = pwInput.value;
+      const plan = Number(box.querySelector('#m-plan').value);
+      const start = box.querySelector('#m-start').value;
+      const amountRaw = box.querySelector('#m-amount').value;
+      const amount = Number(amountRaw);
+      const method = box.querySelector('#m-method').value;
+      const reference = box.querySelector('#m-reference').value.trim();
+      const address = box.querySelector('#m-address').value.trim();
+      const emergency = box.querySelector('#m-emergency').value.trim();
+
+      if (!name) { errEl.textContent = 'Full name is required.'; box.querySelector('#m-name').focus(); return; }
+      if (!phone) { errEl.textContent = 'Mobile number is required.'; box.querySelector('#m-phone').focus(); return; }
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'Enter a valid email address.'; box.querySelector('#m-email').focus(); return; }
+      if (!password || password.length < 8) { errEl.textContent = 'Password is required (minimum 8 characters).'; pwInput.focus(); return; }
+      if (!start) { errEl.textContent = 'Start date is required.'; box.querySelector('#m-start').focus(); return; }
+      if (amountRaw === '' || !Number.isFinite(amount) || amount < 0) { errEl.textContent = 'Enter a valid amount paid.'; box.querySelector('#m-amount').focus(); return; }
+      if (method !== 'Cash' && !reference) { errEl.textContent = 'Online transaction reference is required.'; box.querySelector('#m-reference').focus(); return; }
+      if (live.members.some(m => (m.email || '').toLowerCase() === email)) { errEl.textContent = 'A member with this email already exists.'; box.querySelector('#m-email').focus(); return; }
+
+      const submitBtn = box.querySelector('#m-submit');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Creating…';
       try {
-        const created = await ui.call('create_member', { p_full_name: name, p_phone: phone, p_email: email || null, p_plan_months: plan, p_starts_on: start });
-        await ui.call('record_membership_payment', { p_member_id: created.id, p_plan_months: plan, p_amount: amount, p_method: method, p_reference: reference || null, p_paid_on: start, p_description: method === 'Cash' ? 'New membership' : 'New membership · online payment' });
-        toastLive(`${name} added · ${created.member_no}`);
+        const created = await ui.call('create_member', {
+          p_full_name: name,
+          p_phone: phone,
+          p_email: email,
+          p_address: address || null,
+          p_emergency_contact: emergency || null,
+          p_plan_months: plan,
+          p_starts_on: start
+        });
+        await ui.call('record_membership_payment', {
+          p_member_id: created.id,
+          p_plan_months: plan,
+          p_amount: amount,
+          p_method: method,
+          p_reference: reference || null,
+          p_paid_on: start,
+          p_description: method === 'Cash' ? 'New membership' : 'New membership · online payment'
+        });
+        const loginRes = await sb.functions.invoke('create-member-login', {
+          body: { member_id: created.id, email, password }
+        });
+        if (loginRes.error || loginRes.data?.error) {
+          const code = loginRes.data?.error || loginRes.error?.message || 'LOGIN_CREATE_FAILED';
+          toastLive(`${name} saved (${created.member_no}), but login failed: ${code}`);
+        } else {
+          toastLive(`${name} added · ${created.member_no} · portal account created`);
+        }
+        close();
         await refreshData(true);
-        slot.innerHTML = '';
-        renderStaffMembers();
-      } catch (error) { toastLive(friendly(error)); }
+        if (typeof onDone === 'function') onDone();
+        else if (currentRole === 'owner') renderOwnerMembers();
+        else renderStaffMembers();
+      } catch (error) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Create member ↗';
+        errEl.textContent = friendly(error);
+      }
     };
+
+    box.showModal();
+    box.querySelector('#m-name').focus();
   }
 
   function openRenewalLive(memberId) {
@@ -2609,102 +2824,121 @@
     dialog.showModal();
   }
 
-  function renderStaffWalkins() {
-    const fee = live.settings?.walkin_fee;
-    const today = phToday();
-    const todays = live.walkins.filter(w => !w.voided_at && String(w.visited_on).slice(0, 10) === today);
-    const totalToday = todays.reduce((n, w) => n + Number(w.amount || 0), 0);
-    const cashToday = todays.filter(w => w.method === 'Cash').reduce((n, w) => n + Number(w.amount || 0), 0);
-    const onlineToday = totalToday - cashToday;
-    const days7 = lastDays(7);
-    const walk7 = days7.map(d => live.walkins.filter(w => !w.voided_at && String(w.visited_on).slice(0, 10) === d.iso).reduce((n, w) => n + Number(w.amount || 0), 0));
-    const peak7 = Math.max(0, ...walk7);
-
-    staffContent.innerHTML = `
-      ${staffHeading('FRONT DESK', 'Walk-in visits', 'Recorded separately from memberships.')}
-      <div class="rp-top">
-        ${bentoHero({
-          label: 'TODAY’S WALK-INS',
-          valueHtml: `<strong>${peso(totalToday)}</strong>`,
-          sub: `${todays.length} walk-in visit${todays.length === 1 ? '' : 's'} today`,
-          sparkLabel: '7-DAY WALK-INS',
-          sparkPeak: `Peak ${peso(peak7)}`,
-          points: walk7,
-          split: [['VISITORS TODAY', todays.length], ['CASH', peso(cashToday)], ['ONLINE', peso(onlineToday)]]
-        })}
-        <div class="rp-kpis">
-          <article class="rp-kpi"><span class="rp-kpi-icon">♙</span><div><small>VISITORS TODAY</small><strong>${todays.length}</strong><em>day-pass entries</em></div></article>
-          <article class="rp-kpi"><span class="rp-kpi-icon">₱</span><div><small>DAY-PASS RATE</small><strong>${fee === null || fee === undefined ? '—' : peso(fee)}</strong><em>configured in Settings</em></div></article>
-          <article class="rp-kpi"><span class="rp-kpi-icon">↗</span><div><small>CASH TODAY</small><strong>${peso(cashToday)}</strong><em>drawer receipts</em></div></article>
-          <article class="rp-kpi"><span class="rp-kpi-icon">◷</span><div><small>ONLINE TODAY</small><strong>${peso(onlineToday)}</strong><em>GCash / bank</em></div></article>
-        </div>
-      </div>
-      <div class="walkin-layout">
-        <section class="staff-walkin-card"><div class="panel-head"><div><div class="staff-kicker">NEW VISIT</div><h3>Record a walk-in</h3><p>Confirm payment before recording the visit.</p></div></div>
-          <form id="walkin-live"><label class="field">Visitor name *</label><input class="login-input" id="w-name" required maxlength="100"><label class="field">Phone number</label><input class="login-input" id="w-phone" type="tel" maxlength="30">
-          <div class="renew-expiry"><span>Walk-in fee</span><strong>${fee === null || fee === undefined ? 'Not set by owner' : peso(fee)}</strong></div>
-          <label class="field">Payment method</label><select class="login-input" id="w-method"><option>Cash</option><option>GCash</option><option>Bank transfer</option><option>E-wallet</option><option>Other</option></select>
-          <div id="w-ref-wrap" hidden><label class="field">Online transaction reference</label><input class="login-input" id="w-reference" maxlength="100"><p class="sub">Check the gym’s account independently before confirming.</p></div>
-          <label class="field">Amount received (₱)</label><input class="login-input" id="w-amount" type="number" min="0" step="0.01" value="${fee ?? ''}" required ${fee === null || fee === undefined ? 'disabled' : ''}>
-          <button class="login-submit" style="margin-top:20px" ${fee === null || fee === undefined ? 'disabled' : ''}>Confirm visit ↗</button>
-          <p class="sub">${fee === null || fee === undefined ? 'The owner must set a walk-in fee in Settings first.' : 'The owner sees this transaction in their dashboard.'}</p></form></section>
-        <section class="staff-walkin-card"><div class="panel-head"><div><div class="staff-kicker">TODAY</div><h3>Today’s walk-ins</h3><p>${todays.length} recorded today.</p></div></div><div id="w-list">${todays.length ? todays.map(p => `<div class="attention-row"><div><strong>${esc(p.visitor_name)}</strong><small>${esc(p.receipt_no)} · ${esc(p.method)} · ${esc(chTime(p.created_at))}</small></div><span>${peso(p.amount)}</span></div>`).join('') : '<p class="sub">No walk-ins yet today.</p>'}</div></section>
-      </div>`;
-    const method = staffContent.querySelector('#w-method');
-    method.onchange = () => {
-      const online = method.value !== 'Cash';
-      staffContent.querySelector('#w-ref-wrap').hidden = !online;
-      staffContent.querySelector('#w-reference').required = online;
-    };
-    staffContent.querySelector('#walkin-live').onsubmit = async event => {
-      event.preventDefault();
-      const name = staffContent.querySelector('#w-name').value.trim();
-      const phone = staffContent.querySelector('#w-phone').value.trim();
-      const amount = Number(staffContent.querySelector('#w-amount').value);
-      const reference = staffContent.querySelector('#w-reference').value.trim();
-      if (!name) return toastLive('Enter the visitor’s name.');
-      if (method.value !== 'Cash' && !reference) return toastLive('Enter the online payment reference.');
-      try {
-        const row = await ui.call('record_walkin', { p_name: name, p_phone: phone || null, p_amount: amount, p_method: method.value, p_reference: reference || null });
-        toastLive(`Walk-in recorded · ${row.receipt_no}`);
-        await refreshData(true);
-        renderStaffWalkins();
-      } catch (error) { toastLive(friendly(error)); }
-    };
-  }
-
   function renderStaffCheckins() {
     const today = phToday();
     const todayVisits = live.visits.filter(v => v.visit_date === today);
     const uniqueToday = new Set(todayVisits.map(v => v.member_id)).size;
     const open = live.visits.filter(v => !v.checked_out_at);
     const expiring = live.members.filter(m => m.expiring_soon).length;
+    const fee = live.settings?.walkin_fee;
+    const todaysWalkins = live.walkins.filter(w => !w.voided_at && String(w.visited_on).slice(0, 10) === today);
+    const walkinTotal = todaysWalkins.reduce((n, w) => n + Number(w.amount || 0), 0);
+    const walkinCash = todaysWalkins.filter(w => w.method === 'Cash').reduce((n, w) => n + Number(w.amount || 0), 0);
     const days7 = lastDays(7);
-    const visits7 = days7.map(d => live.visits.filter(v => String(v.visit_date).slice(0, 10) === d.iso).length);
-    const peak7 = Math.max(0, ...visits7);
+    const traffic7 = days7.map(d =>
+      live.visits.filter(v => String(v.visit_date).slice(0, 10) === d.iso).length
+      + live.walkins.filter(w => !w.voided_at && String(w.visited_on).slice(0, 10) === d.iso).length
+    );
+    const peak7 = Math.max(0, ...traffic7);
 
     staffContent.innerHTML = `
-      ${staffHeading('MEMBER ENTRY', 'Member check-ins', 'Verify members and manage entry and exit activity.')}
+      ${staffHeading('FRONT DESK & ENTRY', 'Check-ins & Walk-ins', 'Verify member entry, record day-pass walk-ins, and track who is inside today.')}
       <div class="rp-top">
         ${bentoHero({
-          label: 'CHECK-INS TODAY',
-          valueHtml: `<strong>${todayVisits.length}</strong>`,
-          sub: `${uniqueToday} unique member${uniqueToday === 1 ? '' : 's'} · ${open.length} currently inside`,
-          sparkLabel: '7-DAY VISITS',
+          label: 'TODAY’S GYM TRAFFIC',
+          valueHtml: `<strong>${todayVisits.length + todaysWalkins.length}</strong>`,
+          sub: `${uniqueToday} unique member${uniqueToday === 1 ? '' : 's'} · ${todaysWalkins.length} walk-in${todaysWalkins.length === 1 ? '' : 's'} (${peso(walkinTotal)})`,
+          sparkLabel: '7-DAY TRAFFIC',
           sparkPeak: `Peak ${peak7}/day`,
-          points: visits7,
-          split: [['UNIQUE TODAY', uniqueToday], ['OPEN VISITS', open.length], ['EXPIRING SOON', expiring]]
+          points: traffic7,
+          split: [['OPEN VISITS', open.length], ['WALK-INS TODAY', todaysWalkins.length], ['WALK-IN SALES', peso(walkinTotal)]]
         })}
         <div class="rp-kpis">
-          <article class="rp-kpi"><span class="rp-kpi-icon">♙</span><div><small>UNIQUE MEMBERS</small><strong>${uniqueToday}</strong><em>checked in today</em></div></article>
-          <article class="rp-kpi"><span class="rp-kpi-icon">↗</span><div><small>TOTAL CHECK-INS</small><strong>${todayVisits.length}</strong><em>including repeat visits</em></div></article>
+          <article class="rp-kpi"><span class="rp-kpi-icon">♙</span><div><small>MEMBER CHECK-INS</small><strong>${todayVisits.length}</strong><em>${uniqueToday} unique today</em></div></article>
           <article class="rp-kpi"><span class="rp-kpi-icon">◷</span><div><small>OPEN VISITS</small><strong>${open.length}</strong><em>inside without exit</em></div></article>
-          <article class="rp-kpi"><span class="rp-kpi-icon">✳</span><div><small>EXPIRING SOON</small><strong>${expiring}</strong><em>renew before entry</em></div></article>
+          <article class="rp-kpi"><span class="rp-kpi-icon">₱</span><div><small>WALK-IN REVENUE</small><strong>${peso(walkinTotal)}</strong><em>${peso(walkinCash)} cash today</em></div></article>
+          <article class="rp-kpi"><span class="rp-kpi-icon">✳</span><div><small>DAY-PASS RATE</small><strong>${fee === null || fee === undefined ? '—' : peso(fee)}</strong><em>${expiring} expiring soon</em></div></article>
         </div>
       </div>
-      <div class="attendance-layout"><section class="card attendance-lookup"><div class="staff-kicker">MEMBER VERIFICATION</div><h3>Find a member</h3><p>Enter the member ID, or scan the QR from their member pass.</p><form id="att-lookup"><label class="field">Member ID</label><input class="login-input" id="att-id" placeholder="e.g. HFG-235211" required autocomplete="off"><button class="login-submit">Find member ↗</button></form><div class="attendance-note">✳ &nbsp; Verify identity and membership in person before confirming entry.</div></section>
-      <section class="card attendance-current"><div class="panel-head"><div><div class="staff-kicker">OPEN VISITS</div><h3>Currently checked in</h3><p>Recorded visits without a checkout.</p></div><span class="status-tag">${open.length} open</span></div>${open.length ? open.map(v => { const m = live.members.find(x => x.id === v.member_id); return `<div class="staff-row">${memberAvatar(m)}<div class="staff-row-main"><strong>${esc(m?.full_name || 'Member')}</strong><small>${esc(m?.member_no || '')} · In ${esc(phDateTime(v.checked_in_at))}</small></div><button class="outline att-correct" data-visit="${v.id}">Correct exit</button><button class="outline att-out" data-member="${v.member_id}">Check out</button></div>`; }).join('') : '<div class="attendance-empty">No open visits right now.</div>'}</section></div>
-      <section class="staff-table-card"><div class="panel-head"><div><div class="staff-kicker">THE ACTIVITY LOG</div><h3>Recent activity</h3><p>Check-ins and checkouts · Philippine time.</p></div></div>${live.visits.slice(0, 12).map(v => { const m = live.members.find(x => x.id === v.member_id); return `<div class="staff-row">${memberAvatar(m)}<div class="staff-row-main"><strong>${esc(m?.full_name || 'Member')} · ${v.checked_out_at ? 'Checkout' : 'Check-in'}</strong><small>${esc(m?.member_no || '')} · ${esc(phDateTime(v.checked_out_at || v.checked_in_at))}</small></div></div>`; }).join('') || '<div class="attendance-empty">No entry or exit activity yet.</div>'}</section>`;
+
+      <div class="walkin-layout" style="margin-bottom:16px">
+        <section class="card attendance-lookup">
+          <div class="staff-kicker">MEMBER VERIFICATION</div>
+          <h3>Find a member</h3>
+          <p>Enter the member ID, or scan the QR from their member pass.</p>
+          <form id="att-lookup">
+            <label class="field" for="att-id">Member ID</label>
+            <input class="login-input" id="att-id" placeholder="e.g. HFG-235211" required autocomplete="off">
+            <button class="login-submit">Find member ↗</button>
+          </form>
+          <div class="attendance-note">✳ &nbsp; Verify identity and membership in person before confirming entry.</div>
+        </section>
+
+        <section class="staff-walkin-card">
+          <div class="panel-head"><div><div class="staff-kicker">DAY PASS</div><h3>Record a walk-in</h3><p>Confirm payment before logging a day visitor.</p></div></div>
+          <form id="walkin-live">
+            <div class="renew-expiry" style="margin-top:0"><span>Walk-in fee</span><strong>${fee === null || fee === undefined ? 'Not set by owner' : peso(fee)}</strong></div>
+            <label class="field" for="w-method">Payment method</label>
+            <select class="login-input" id="w-method"><option>Cash</option><option>GCash</option><option>Bank transfer</option><option>E-wallet</option><option>Other</option></select>
+            <div id="w-ref-wrap" hidden>
+              <label class="field" for="w-reference">Online transaction reference</label>
+              <input class="login-input" id="w-reference" maxlength="100" placeholder="Enter payment reference">
+              <p class="sub">Check the gym’s account independently before confirming.</p>
+            </div>
+            <label class="field" for="w-amount">Amount received (₱)</label>
+            <input class="login-input" id="w-amount" type="number" min="0" step="0.01" value="${fee ?? ''}" required ${fee === null || fee === undefined ? 'disabled' : ''}>
+            <button class="login-submit" id="w-submit" style="margin-top:20px" ${fee === null || fee === undefined ? 'disabled' : ''}>Confirm walk-in ↗</button>
+            <p class="sub">${fee === null || fee === undefined ? 'The owner must set a walk-in fee in Settings first.' : 'Recorded without a visitor name · synced to owner reports.'}</p>
+          </form>
+        </section>
+      </div>
+
+      <div class="walkin-layout" style="margin-bottom:16px">
+        <section class="card attendance-current">
+          <div class="panel-head"><div><div class="staff-kicker">OPEN VISITS</div><h3>Currently checked in</h3><p>Recorded visits without a checkout.</p></div><span class="status-tag">${open.length} open</span></div>
+          ${open.length ? open.map(v => { const m = live.members.find(x => x.id === v.member_id); return `<div class="staff-row">${memberAvatar(m)}<div class="staff-row-main"><strong>${esc(m?.full_name || 'Member')}</strong><small>${esc(m?.member_no || '')} · In ${esc(phDateTime(v.checked_in_at))}</small></div><button class="outline att-correct" data-visit="${v.id}">Correct exit</button><button class="outline att-out" data-member="${v.member_id}">Check out</button></div>`; }).join('') : '<div class="attendance-empty">No open visits right now.</div>'}
+        </section>
+
+        <section class="staff-walkin-card">
+          <div class="panel-head"><div><div class="staff-kicker">TODAY</div><h3>Today’s walk-ins</h3><p>${todaysWalkins.length} recorded today.</p></div><span class="status-tag">${peso(walkinTotal)}</span></div>
+          <div id="w-list">${todaysWalkins.length ? todaysWalkins.map(p => `<div class="attention-row"><div><strong>${esc(p.receipt_no)} · Day pass</strong><small>${esc(p.method)}${p.reference ? ' · Ref ' + esc(p.reference) : ''} · ${esc(chTime(p.created_at))}</small></div><span>${peso(p.amount)}</span></div>`).join('') : '<p class="sub">No walk-ins yet today.</p>'}</div>
+        </section>
+      </div>
+
+      <section class="staff-table-card">
+        <div class="panel-head"><div><div class="staff-kicker">THE ACTIVITY LOG</div><h3>Recent member check-ins</h3><p>Check-ins and checkouts · Philippine time.</p></div></div>
+        ${live.visits.slice(0, 12).map(v => { const m = live.members.find(x => x.id === v.member_id); return `<div class="staff-row">${memberAvatar(m)}<div class="staff-row-main"><strong>${esc(m?.full_name || 'Member')} · ${v.checked_out_at ? 'Checkout' : 'Check-in'}</strong><small>${esc(m?.member_no || '')} · ${esc(phDateTime(v.checked_out_at || v.checked_in_at))}</small></div></div>`; }).join('') || '<div class="attendance-empty">No entry or exit activity yet.</div>'}
+      </section>`;
+
+    const method = staffContent.querySelector('#w-method');
+    method.onchange = () => {
+      const online = method.value !== 'Cash';
+      staffContent.querySelector('#w-ref-wrap').hidden = !online;
+      staffContent.querySelector('#w-reference').required = online;
+    };
+    let walkinSaving = false;
+    staffContent.querySelector('#walkin-live').onsubmit = async event => {
+      event.preventDefault();
+      if (walkinSaving) return;
+      const amount = Number(staffContent.querySelector('#w-amount').value);
+      const reference = staffContent.querySelector('#w-reference').value.trim();
+      if (method.value !== 'Cash' && !reference) return toastLive('Enter the online payment reference.');
+      walkinSaving = true;
+      const btn = staffContent.querySelector('#w-submit');
+      if (btn) btn.disabled = true;
+      try {
+        const row = await ui.call('record_walkin', { p_name: null, p_phone: null, p_amount: amount, p_method: method.value, p_reference: reference || null });
+        toastLive(`Walk-in recorded · ${row.receipt_no}`);
+        await refreshData(true);
+        renderStaffCheckins();
+      } catch (error) {
+        toastLive(friendly(error));
+      } finally {
+        walkinSaving = false;
+        if (btn && fee !== null && fee !== undefined) btn.disabled = false;
+      }
+    };
+
     staffContent.querySelector('#att-lookup').onsubmit = async event => {
       event.preventDefault();
       const raw = staffContent.querySelector('#att-id').value.trim();
