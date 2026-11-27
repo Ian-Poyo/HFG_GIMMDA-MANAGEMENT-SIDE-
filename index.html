@@ -534,12 +534,64 @@ select.team-role{width:100%;max-width:150px;min-width:0}
 
 
 /* Add Member pop-up modal & required indicators */
-dialog.renew-dialog.add-member-dialog{width:min(540px,calc(100% - 28px));max-height:90vh;overflow:auto}
+dialog.renew-dialog.add-member-dialog{width:min(560px,calc(100% - 28px));max-height:90vh;overflow:auto}
 .req-star{color:#c94a4a;margin-left:2px;font-weight:700}
 .modal-two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .modal-two-col>div{min-width:0}
+.modal-span-2{grid-column:1/-1}
 .owner-dir-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-@media(max-width:560px){.modal-two-col{grid-template-columns:1fr}}
+.add-photo-row{display:flex;align-items:center;gap:14px;padding:12px 14px;margin:16px 0 4px;border:1px dashed #d3dfd0;border-radius:14px;background:#f7faf5}
+.add-photo-preview{width:56px;height:56px;border-radius:14px;background:#e4efdc;color:#3d6135;display:grid;place-items:center;font:700 17px Manrope,sans-serif;overflow:hidden;flex-shrink:0;border:2px solid #fff;box-shadow:0 2px 8px rgba(24,49,33,.08)}
+.add-photo-preview img{width:100%;height:100%;object-fit:cover;display:block}
+.add-photo-meta{flex:1;min-width:0}
+.add-photo-title{font:700 12px 'DM Sans',sans-serif;color:#27402d;display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.opt-badge{font:600 9.5px 'DM Sans',sans-serif;color:#6f8872;background:#eaf2e4;border-radius:99px;padding:2px 8px;letter-spacing:.2px}
+.add-photo-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.add-photo-meta small{display:block;margin-top:5px;font-size:10px;color:#88978a}
+
+/* Clean Member Profile pop-up modal */
+dialog.renew-dialog.member-profile-dialog{width:min(720px,calc(100% - 28px));max-height:90vh;overflow:auto;border-radius:20px}
+.mp-head{background:linear-gradient(135deg,#193222 0%,#26412f 100%);color:#fff;padding:22px 26px 20px;position:relative;overflow:hidden}
+.mp-head::after{content:"";position:absolute;width:180px;height:180px;border:1px solid rgba(217,237,195,.14);border-radius:50%;right:-55px;top:-65px;box-shadow:0 0 0 24px rgba(217,237,195,.04);pointer-events:none}
+.mp-head-top{display:flex;align-items:center;justify-content:space-between;gap:12px;position:relative;z-index:1}
+.mp-head-top .eyebrow{color:#b5cfa9;margin:0}
+.mp-close{border:0;background:rgba(255,255,255,.14);color:#fff;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:18px;display:grid;place-items:center;transition:background .15s}
+.mp-close:hover{background:rgba(255,255,255,.24)}
+.mp-identity{display:flex;align-items:center;gap:15px;margin-top:16px;position:relative;z-index:1;flex-wrap:wrap}
+.mp-avatar{width:62px;height:62px;border-radius:16px;background:#dcebc8;color:#2f4c34;display:grid;place-items:center;font:700 20px Manrope,sans-serif;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,255,255,.28)}
+.mp-avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.mp-id-info{flex:1;min-width:180px}
+.mp-id-info h2{font:700 20px Manrope,sans-serif;margin:0;letter-spacing:-.4px;color:#fff}
+.mp-id-info p{margin:4px 0 0;font-size:11.5px;color:#bdd1ba}
+.mp-photo-bar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.mp-photo-btn{border:1px solid rgba(255,255,255,.24);background:rgba(255,255,255,.10);color:#eef6e8;border-radius:99px;padding:4px 11px;font:600 10.5px 'DM Sans',sans-serif;cursor:pointer;display:inline-flex;align-items:center}
+.mp-photo-btn:hover{background:rgba(255,255,255,.18)}
+.mp-plan-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.16);position:relative;z-index:1}
+.mp-plan-strip small{display:block;font-size:9px;font-weight:700;letter-spacing:.7px;color:#a8c1a7}
+.mp-plan-strip strong{display:block;font-size:12.5px;color:#f6fbf4;margin-top:4px}
+.mp-body{padding:20px 26px 26px;background:#fff;display:grid;gap:16px}
+.mp-action-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mp-action-bar .login-submit{width:auto;height:36px;padding:0 16px;font-size:11.5px;border-radius:99px}
+.mp-action-bar .outline{height:36px;padding:0 14px;font-size:11px;font-weight:600;border-radius:99px;display:inline-flex;align-items:center}
+.mp-action-bar .member-act-danger{color:#a5423b;border-color:#efd2cf;margin-left:auto}
+.mp-card{border:1px solid #e8efe5;border-radius:14px;padding:16px 18px;background:#fafcf9;min-width:0}
+.mp-card-title{font:700 10px 'DM Sans',sans-serif;letter-spacing:.9px;color:#7f9482;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;text-transform:uppercase}
+.mp-card .field{margin:0 0 6px;font-size:11px;color:#39503d}
+.mp-card .login-input{height:40px;font-size:12.5px;border-radius:9px}
+.mp-form-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;flex-wrap:wrap}
+.mp-form-foot .login-submit{width:auto;height:38px;padding:0 18px;font-size:11.5px}
+.mp-history-list{display:grid;gap:8px}
+.mp-history-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;background:#fff;border:1px solid #edf2eb;border-radius:10px;font-size:11.5px}
+.mp-history-item strong{display:block;color:#2e4633;font-size:11.5px}
+.mp-history-item small{display:block;color:#93a295;font-size:10px;margin-top:2px}
+.mp-history-item b{color:#26412f;font-size:11.5px;white-space:nowrap}
+@media(max-width:620px){
+  .modal-two-col{grid-template-columns:1fr}
+  .mp-head{padding:18px 20px}
+  .mp-body{padding:16px 18px 22px}
+  .mp-plan-strip{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .mp-action-bar .member-act-danger{margin-left:0}
+}
 
 /* Member avatar photo support + redesigned Staff Portal bento styles */
 .owner-member-avatar{overflow:hidden;flex-shrink:0}

@@ -1296,7 +1296,6 @@
         </section>
 
         <div class="rp-side-stack">
-          <aside class="card owner-member-detail"><div id="owner-detail"><div class="staff-kicker">MEMBER PROFILE</div><div class="owner-profile-placeholder"><div class="owner-profile-symbol">♙</div><h3>Select a member</h3><p>Review their membership, contact details, payments and visits.</p></div></div></aside>
           <section class="card rp-new-card">
             <div class="panel-head"><div><div class="staff-kicker">GROWTH</div><h3>Newest members</h3><p>Most recent sign-ups.</p></div></div>
             ${newest.length ? newest.map(m => `<div class="rp-new-row">${memberAvatar(m)}<div><strong>${esc(m.full_name)}</strong><small>${esc(m.member_no)} · joined ${esc(fmtDay(m.joined_on))}</small></div><span class="status-tag ${m.effective_status === 'Deactivated' ? 'status-deactivated' : ''}">${esc(m.effective_status)}</span></div>`).join('') : '<p class="sub">No members yet.</p>'}
@@ -1384,63 +1383,172 @@
     return `<div class="owner-member-row" data-id="${m.id}">${memberAvatar(m)}<div class="owner-member-info"><strong>${esc(m.full_name)}</strong><small>${esc(m.member_no)} · ${esc(m.plan_months ? planLabel(m.plan_months) : 'Plan not set')}</small></div><div class="owner-member-expiry"><small>EXPIRES</small><strong>${esc(fmtDay(m.expires_on))}</strong></div><span class="status-tag ${tag}">${m.effective_status === 'Deactivated' && m.expired ? 'Expired' : m.effective_status}${m.expiring_soon ? ' · Soon' : ''}</span><button class="outline owner-profile" data-id="${m.id}">View ↗</button></div>`;
   }
 
-  function showOwnerMember(id) {
+  function openMemberProfileModal(id) {
     const member = live.members.find(m => m.id === id);
     if (!member) return;
+    document.querySelector('#member-profile-dialog')?.remove();
+
+    const isOwnerView = currentRole === 'owner';
     const payments = live.payments.filter(p => p.member_id === id).slice(0, 6);
     const visits = live.visits.filter(v => v.member_id === id).slice(0, 6);
-    const detail = ownerContent.querySelector('#owner-detail');
-    detail.innerHTML = `<div class="staff-kicker">MEMBER PROFILE</div>
-      <div class="profile-heading">${memberAvatar(member, 'owner-member-avatar owner-profile-symbol')}<div><h3>${esc(member.full_name)}</h3><p>${esc(member.member_no)} · joined ${esc(fmtDay(member.joined_on))}</p></div><span class="status-tag ${member.effective_status === 'Deactivated' ? 'status-deactivated' : member.expiring_soon ? 'status-expiring' : ''}">${member.effective_status}</span></div>
-      <div class="profile-section"><div class="profile-section-title">MEMBERSHIP <span>${esc(member.plan_months ? planLabel(member.plan_months) : 'No plan')}</span></div>
-        <div class="profile-line"><span>Start</span><strong>${esc(fmtDay(member.starts_on))}</strong></div>
-        <div class="profile-line"><span>Expiry</span><strong>${esc(fmtDay(member.expires_on))}</strong></div>
-        <div class="profile-line"><span>Reminders</span><strong>${member.reminders ? 'On' : 'Off'}</strong></div></div>
-      <div class="profile-section"><div class="profile-section-title">CONTACT &amp; DETAILS</div>
-        <form id="owner-edit-member">
-          <label class="field">Full name</label><input class="login-input oe-name" value="${esc(member.full_name)}" required maxlength="100">
-          <label class="field">Mobile</label><input class="login-input oe-phone" value="${esc(member.phone || '')}" maxlength="30">
-          <label class="field">Email</label><input class="login-input oe-email" type="email" value="${esc(member.email || '')}">
-          <label class="field">Address</label><input class="login-input oe-address" value="${esc(member.address || '')}" maxlength="200">
-          <label class="field">Emergency contact</label><input class="login-input oe-emergency" value="${esc(member.emergency_contact || '')}" maxlength="100">
-          <button class="outline" type="submit" style="margin-top:12px">Save changes</button>
-        </form>
+    const statusClass = member.effective_status === 'Deactivated' ? 'status-deactivated' : member.expiring_soon ? 'status-expiring' : '';
+    const statusLabel = member.effective_status === 'Deactivated' && member.expired ? 'Expired' : member.effective_status;
+    const frozen = !!member.frozen_at;
+    const archived = !!member.archived_at;
+
+    const box = document.createElement('dialog');
+    box.className = 'renew-dialog member-profile-dialog';
+    box.id = 'member-profile-dialog';
+    box.innerHTML = `
+      <div class="mp-head">
+        <div class="mp-head-top">
+          <div class="eyebrow">MEMBER PROFILE</div>
+          <button type="button" class="mp-close" aria-label="Close">×</button>
+        </div>
+        <div class="mp-identity">
+          <div class="mp-avatar" id="member-photo">${member.photo_url ? `<img src="${esc(member.photo_url)}" alt="">` : `<span>${esc(initials(member.full_name))}</span>`}</div>
+          <div class="mp-id-info">
+            <h2>${esc(member.full_name)}</h2>
+            <p>${esc(member.member_no)} · Joined ${esc(fmtDay(member.joined_on))}</p>
+            <div class="mp-photo-bar">
+              <label class="mp-photo-btn photo-upload">${member.photo_url ? 'Change photo' : 'Upload photo'}<input type="file" id="photo-file" accept="image/jpeg,image/png,image/webp" hidden></label>
+              ${member.photo_url ? '<button type="button" class="mp-photo-btn" id="photo-remove">Remove</button>' : ''}
+            </div>
+          </div>
+          <span class="status-tag ${statusClass}">${esc(statusLabel)}</span>
+        </div>
+        <div class="mp-plan-strip">
+          <div><small>PLAN</small><strong>${esc(member.plan_months ? planLabel(member.plan_months) : 'No plan')}</strong></div>
+          <div><small>START</small><strong>${esc(fmtDay(member.starts_on))}</strong></div>
+          <div><small>EXPIRY</small><strong>${esc(fmtDay(member.expires_on))}</strong></div>
+          <div><small>REMINDERS</small><strong>${member.reminders ? 'On' : 'Off'}</strong></div>
+        </div>
       </div>
-      <div class="profile-section"><div class="profile-section-title">RECENT PAYMENTS</div>${payments.length ? payments.map(p => `<div class="profile-history"><div>${esc(p.receipt_no)}<small>${esc(phDateTime(p.created_at))} · ${esc(p.method)} · ${esc(p.status)}</small></div><b>${peso(p.amount)}</b></div>`).join('') : '<p class="sub">No payments recorded.</p>'}</div>
-      <div class="profile-section"><div class="profile-section-title">RECENT VISITS</div>${visits.length ? visits.map(v => `<div class="profile-history"><div>${esc(phDateTime(v.checked_in_at))}<small>${v.checked_out_at ? 'Out ' + esc(phDateTime(v.checked_out_at)) : 'Still inside'}</small></div></div>`).join('') : '<p class="sub">No visits recorded.</p>'}</div>
-      ${memberActionsSection(member)}
-      <div class="profile-section"><div class="profile-section-title">MEMBER PORTAL</div>${member.auth_user_id
-        ? '<p class="sub" style="line-height:1.8">This member has a portal login and can sign in to see their pass and payment history.</p>'
-        : `<p class="sub" style="line-height:1.8">This member cannot sign in yet. Create a login below and give them the password — they change it after signing in.</p>
-           <label class="field">Account email</label><input class="login-input" id="login-email" type="email" placeholder="member@email.com" value="${esc(member.email || '')}">
-           <button class="login-submit" id="create-login" style="margin-top:10px;width:auto;padding:0 18px;height:40px">Create portal login</button>
-           <p class="sub" style="margin-top:8px">Only the owner can do this. A password is generated and shown once.</p>
-           <details style="margin-top:14px"><summary class="sub" style="cursor:pointer">Already have an account for them?</summary>
-             <label class="field" style="margin-top:10px">Account email</label><input class="login-input" id="link-email" type="email" placeholder="member@email.com"><button class="outline" id="link-account" style="margin-top:10px">Link existing account</button>
-           </details>`}</div>`;
-    const oeForm = detail.querySelector('#owner-edit-member');
-    if (oeForm) oeForm.onsubmit = async event => {
+
+      <div class="mp-body">
+        <div class="mp-action-bar">
+          <button type="button" class="login-submit renew-now">Record payment / renew ↗</button>
+          <button type="button" class="outline status-toggle">${member.status === 'Active' ? 'Deactivate' : 'Reactivate'}</button>
+          ${isOwnerView ? (
+            frozen ? `<button type="button" class="outline" id="act-unfreeze">Resume membership</button>`
+            : archived ? `<button type="button" class="outline" id="act-restore">Restore member</button>`
+            : `<button type="button" class="outline" id="act-freeze">Freeze / hold</button><button type="button" class="outline" id="act-merge">Merge</button><button type="button" class="outline" id="act-archive">Archive</button>`
+          ) : ''}
+          <button type="button" class="outline member-act-danger ${isOwnerView ? '' : 'staff-delete-member'}" id="act-delete">Delete member</button>
+        </div>
+
+        ${frozen ? `<div class="frozen-banner" style="margin:0">Frozen until <b>${esc(fmtDay(member.frozen_until))}</b> — expiry moved to ${esc(fmtDay(member.expires_on))}.<br><small>${esc(member.freeze_reason || '')}</small></div>` : ''}
+        ${archived ? `<div class="frozen-banner" style="margin:0">Archived — ${esc(member.archive_reason || 'no reason recorded')}.<br><small>Their payments and visits are kept in the books.</small></div>` : ''}
+
+        <div class="mp-card">
+          <div class="mp-card-title">CONTACT &amp; DETAILS <span>Direct edit</span></div>
+          <form id="${isOwnerView ? 'owner-edit-member' : 'staff-edit-member'}" class="profile-form">
+            <div class="modal-two-col">
+              <div><label class="field">Full name</label><input class="login-input oe-name p-name" value="${esc(member.full_name)}" required maxlength="100"></div>
+              <div><label class="field">Mobile</label><input class="login-input oe-phone p-phone" value="${esc(member.phone || '')}" maxlength="30" placeholder="Optional"></div>
+              <div><label class="field">Email</label><input class="login-input oe-email p-email" type="email" value="${esc(member.email || '')}" placeholder="Optional"></div>
+              <div><label class="field">Emergency contact</label><input class="login-input oe-emergency p-emergency" value="${esc(member.emergency_contact || '')}" maxlength="100" placeholder="Optional"></div>
+              <div class="modal-span-2"><label class="field">Address</label><input class="login-input oe-address p-address" value="${esc(member.address || '')}" maxlength="200" placeholder="Optional"></div>
+            </div>
+            <div class="mp-form-foot">
+              <span class="sub" style="margin:0">Updates save directly to the gym record.</span>
+              <button class="login-submit" type="submit">Save changes</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="modal-two-col">
+          <div class="mp-card">
+            <div class="mp-card-title">RECENT PAYMENTS <span>${payments.length}</span></div>
+            <div class="mp-history-list">${payments.length ? payments.map(p => `<div class="mp-history-item"><div><strong>${esc(p.receipt_no)}</strong><small>${esc(phDateTime(p.created_at))} · ${esc(p.method)} · ${esc(p.status)}</small></div><b>${peso(p.amount)}</b></div>`).join('') : '<p class="sub" style="margin:0">No payments recorded.</p>'}</div>
+          </div>
+          <div class="mp-card">
+            <div class="mp-card-title">RECENT VISITS <span>${visits.length}</span></div>
+            <div class="mp-history-list">${visits.length ? visits.map(v => `<div class="mp-history-item"><div><strong>${esc(phDateTime(v.checked_in_at))}</strong><small>${v.checked_out_at ? 'Out ' + esc(phDateTime(v.checked_out_at)) : 'Still inside'}</small></div></div>`).join('') : '<p class="sub" style="margin:0">No visits recorded.</p>'}</div>
+          </div>
+        </div>
+
+        ${isOwnerView ? `<div class="mp-card"><div class="mp-card-title">MEMBER PORTAL ACCESS</div>${member.auth_user_id
+          ? '<p class="sub" style="margin:0;line-height:1.7">This member has a portal login and can sign in to view their pass and payment history.</p>'
+          : `<p class="sub" style="margin:0 0 10px;line-height:1.7">This member cannot sign in yet. Create a login below or link an existing account.</p>
+             <div class="modal-two-col" style="align-items:end">
+               <div><label class="field">Account email</label><input class="login-input" id="login-email" type="email" placeholder="member@email.com" value="${esc(member.email || '')}"></div>
+               <div><button type="button" class="login-submit" id="create-login" style="height:40px">Create portal login</button></div>
+             </div>
+             <details style="margin-top:12px"><summary class="sub" style="cursor:pointer">Already have an account for them?</summary>
+               <div class="modal-two-col" style="align-items:end;margin-top:8px">
+                 <div><label class="field">Account email</label><input class="login-input" id="link-email" type="email" placeholder="member@email.com"></div>
+                 <div><button type="button" class="outline" id="link-account" style="height:40px;width:100%">Link existing account</button></div>
+               </div>
+             </details>`}</div>` : ''}
+      </div>`;
+
+    document.body.append(box);
+    const closeModal = () => { box.close(); box.remove(); };
+    box.querySelector('.mp-close').onclick = closeModal;
+    box.addEventListener('cancel', e => { e.preventDefault(); closeModal(); });
+    box.addEventListener('click', e => { if (e.target === box) closeModal(); });
+
+    const refreshCurrentView = () => {
+      if (currentRole === 'owner') renderOwnerMembers();
+      else renderStaffMembers();
+    };
+    const rerenderSelf = () => {
+      const still = live.members.find(m => m.id === member.id);
+      if (still) openMemberProfileModal(still.id);
+      else { closeModal(); refreshCurrentView(); }
+    };
+
+    box.querySelector('.renew-now').onclick = () => {
+      closeModal();
+      openRenewalLive(member.id);
+    };
+
+    box.querySelector('.status-toggle').onclick = async () => {
+      const next = member.status === 'Active' ? 'Deactivated' : 'Active';
+      const ok = await confirmDialog({
+        title: next === 'Active' ? 'Reactivate this member?' : 'Deactivate this member?',
+        body: next === 'Active' ? 'Reactivating lets them check in again. Confirm only after payment or an owner decision.' : 'Deactivated members can’t check in. The record and history stay available.',
+        confirm: next === 'Active' ? 'Reactivate' : 'Deactivate'
+      });
+      if (!ok) return;
+      try {
+        await ui.call('set_member_status', { p_member_id: member.id, p_status: next, p_reason: null });
+        await refreshData(true);
+        refreshCurrentView();
+        rerenderSelf();
+      } catch (error) { toastLive(friendly(error)); }
+    };
+
+    const editForm = box.querySelector('.profile-form');
+    if (editForm) editForm.onsubmit = async event => {
       event.preventDefault();
-      const fullName = oeForm.querySelector('.oe-name').value.trim();
+      const fullName = editForm.querySelector('.p-name').value.trim();
       if (!fullName) return toastLive('Full name is required.');
       try {
         await ui.call('update_member_details', {
           p_member_id: member.id,
           p_full_name: fullName,
-          p_phone: oeForm.querySelector('.oe-phone').value.trim() || null,
-          p_email: oeForm.querySelector('.oe-email').value.trim() || null,
-          p_address: oeForm.querySelector('.oe-address').value.trim() || null,
-          p_emergency_contact: oeForm.querySelector('.oe-emergency').value.trim() || null
+          p_phone: editForm.querySelector('.p-phone').value.trim() || null,
+          p_email: editForm.querySelector('.p-email').value.trim() || null,
+          p_address: editForm.querySelector('.p-address').value.trim() || null,
+          p_emergency_contact: editForm.querySelector('.p-emergency').value.trim() || null
         });
-        toastLive('Member changes saved.');
+        toastLive('Changes saved.');
         await refreshData(true);
-        showOwnerMember(member.id);
+        refreshCurrentView();
+        rerenderSelf();
       } catch (error) { toastLive(friendly(error)); }
     };
-    wireMemberActions(member, () => { const still = live.members.find(m => m.id === member.id); if (still) showOwnerMember(still.id); else renderOwnerMembers(); });
-    const createButton = detail.querySelector('#create-login');
+
+    wireMemberActions(member, () => {
+      refreshCurrentView();
+      rerenderSelf();
+    }, box);
+
+    const createButton = box.querySelector('#create-login');
     if (createButton) createButton.onclick = async () => {
-      const email = detail.querySelector('#login-email').value.trim();
+      const email = box.querySelector('#login-email').value.trim();
       if (!email) return toastLive('Enter the email to use for signing in.');
       createButton.disabled = true;
       try {
@@ -1451,25 +1559,34 @@
             <div class="wf-row"><span>Member ID</span><strong>${esc(result.member_no)}</strong></div>
             <div class="wf-row"><span>Email</span><strong>${esc(result.email)}</strong></div>
             <div class="wf-row"><span>Password</span><strong style="font-family:ui-monospace,monospace">${esc(result.password)}</strong></div>
-            <p class="sub" style="margin-top:14px">This password works every time they sign in and does not expire. It is shown only now, so write it down before closing. If they lose it, the owner resets it from Supabase → Authentication.</p>`,
+            <p class="sub" style="margin-top:14px">This password works every time they sign in and does not expire. It is shown only now, so write it down before closing.</p>`,
           action: 'Done',
           onAction: () => {}
         });
         await refreshData(true);
+        refreshCurrentView();
+        rerenderSelf();
       } catch (error) { toastLive(loginErrorMessage(error)); }
       finally { createButton.disabled = false; }
     };
-    const linkButton = detail.querySelector('#link-account');
+    const linkButton = box.querySelector('#link-account');
     if (linkButton) linkButton.onclick = async () => {
-      const email = detail.querySelector('#link-email').value.trim();
+      const email = box.querySelector('#link-email').value.trim();
       if (!email) return toastLive('Enter the account email.');
       try {
         await ui.call('link_member_account', { p_member_id: member.id, p_email: email });
         toastLive('Portal account linked.');
         await refreshData(true);
-        showOwnerMember(memberId);
+        refreshCurrentView();
+        rerenderSelf();
       } catch (error) { toastLive(friendly(error)); }
     };
+
+    box.showModal();
+  }
+
+  function showOwnerMember(id) {
+    openMemberProfileModal(id);
   }
 
   /* ---- Portal logins ---------------------------------------------------- */
@@ -1534,8 +1651,8 @@
     </div>`;
   }
 
-  function wireMemberActions(member, rerender) {
-    const detail = ownerContent.querySelector('#owner-detail');
+  function wireMemberActions(member, rerender, rootEl) {
+    const detail = rootEl || ownerContent.querySelector('#owner-detail');
     if (!detail) return;
     const file = detail.querySelector('#photo-file');
     if (file) file.onchange = async () => {
@@ -1611,8 +1728,11 @@
       try {
         await ui.call('delete_member', { p_member_id: member.id, p_reason: 'Deleted from dashboard' });
         toastLive(`${member.full_name} deleted.`);
+        document.querySelector('#member-profile-dialog')?.close();
+        document.querySelector('#member-profile-dialog')?.remove();
         await refreshData(true);
-        renderOwnerMembers();
+        if (currentRole === 'owner') renderOwnerMembers();
+        else renderStaffMembers();
       } catch (error) { toastLive(friendly(error)); }
     };
   }
@@ -2455,116 +2575,7 @@
   }
 
   function openStaffMember(id) {
-    const member = live.members.find(m => m.id === id);
-    if (!member) return;
-    const slot = staffContent.querySelector('#staff-form-slot') || staffContent.querySelector('#member-form-container');
-    const payments = live.payments.filter(p => p.member_id === id);
-    const visits = live.visits.filter(v => v.member_id === id);
-    const form = document.createElement('section');
-    form.className = 'staff-table-card';
-    form.innerHTML = `
-      <div class="staff-profile-head">
-        <div class="staff-profile-id">
-          <div class="member-photo" id="staff-member-photo">${member.photo_url ? `<img src="${esc(member.photo_url)}" alt="">` : `<span>${esc(initials(member.full_name))}</span>`}</div>
-          <div>
-            <div class="staff-kicker" style="margin-bottom:3px">${esc(member.member_no)}</div>
-            <h3 style="margin:0;font:700 17px Manrope,sans-serif;color:#1b2d20">${esc(member.full_name)}</h3>
-            <p class="sub" style="margin:3px 0 0">Edit profile details, upload a photo, renew, or manage status directly.</p>
-            <div class="staff-profile-photo-actions">
-              <label class="outline photo-upload" style="cursor:pointer">${member.photo_url ? 'Change photo' : 'Upload photo'}<input type="file" id="staff-photo-file" accept="image/jpeg,image/png,image/webp" hidden></label>
-              ${member.photo_url ? '<button type="button" class="outline" id="staff-photo-remove">Remove photo</button>' : ''}
-            </div>
-          </div>
-        </div>
-        <button class="outline close-profile">Close</button>
-      </div>
-      <div class="profile-section"><div class="profile-section-title">MEMBERSHIP <span>${esc(member.plan_months ? planLabel(member.plan_months) : 'No plan')}</span></div>
-        <div class="profile-line"><span>Status</span><strong>${esc(member.effective_status)}</strong></div>
-        <div class="profile-line"><span>Start</span><strong>${esc(fmtDay(member.starts_on))}</strong></div>
-        <div class="profile-line"><span>Expiry</span><strong>${esc(fmtDay(member.expires_on))}</strong></div></div>
-      <div class="renew-actions" style="margin:12px 0;flex-wrap:wrap"><button class="login-submit renew-now" style="width:auto;padding:0 18px">Record payment / renew ↗</button><button class="outline status-toggle">${member.status === 'Active' ? 'Deactivate member' : 'Reactivate member'}</button><button type="button" class="outline member-act-danger staff-delete-member" style="color:#a5423b;border-color:#efd2cf">Delete member</button></div>
-      <form class="profile-form"><div class="profile-section-title">EDIT MEMBER DETAILS</div><label class="field">Full name</label><input class="login-input p-name" value="${esc(member.full_name)}" required maxlength="100"><label class="field">Mobile number</label><input class="login-input p-phone" value="${esc(member.phone || '')}" maxlength="30"><label class="field">Email</label><input class="login-input p-email" type="email" value="${esc(member.email || '')}"><label class="field">Address</label><input class="login-input p-address" value="${esc(member.address || '')}" maxlength="200"><label class="field">Emergency contact</label><input class="login-input p-emergency" value="${esc(member.emergency_contact || '')}" maxlength="100"><button class="login-submit" type="submit" style="margin-top:14px;width:auto;padding:0 20px;height:40px">Save changes</button></form>
-      <div class="profile-section"><div class="profile-section-title">PAYMENT HISTORY</div>${payments.length ? payments.map(p => `<div class="profile-history"><div>${esc(p.receipt_no)}<small>${esc(phDateTime(p.created_at))} · ${esc(p.method)} · ${esc(p.status)}</small></div><b>${peso(p.amount)}</b></div>`).join('') : '<p class="sub">No payments recorded.</p>'}</div>
-      <div class="profile-section"><div class="profile-section-title">VISITS</div>${visits.slice(0, 8).map(v => `<div class="profile-history"><div>${esc(phDateTime(v.checked_in_at))}<small>${v.checked_out_at ? 'Out ' + esc(phDateTime(v.checked_out_at)) : 'Still inside'}</small></div></div>`).join('') || '<p class="sub">No visits recorded.</p>'}</div>`;
-    slot.innerHTML = '';
-    slot.append(form);
-    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    form.querySelector('.close-profile').onclick = () => form.remove();
-    form.querySelector('.renew-now').onclick = () => openRenewalLive(id);
-
-    const photoInput = form.querySelector('#staff-photo-file');
-    if (photoInput) photoInput.onchange = async () => {
-      const chosen = photoInput.files?.[0];
-      if (!chosen) return;
-      try { await validateImage(chosen); }
-      catch (invalidFile) { return toastLive(invalidFile.message); }
-      const label = form.querySelector('.photo-upload');
-      if (label) label.textContent = 'Uploading…';
-      try {
-        const ext = chosen.type === 'image/png' ? 'png' : chosen.type === 'image/webp' ? 'webp' : 'jpg';
-        const path = `${member.id}/${Date.now()}.${ext}`;
-        const upload = await sb.storage.from('member-photos').upload(path, chosen, { upsert: true, contentType: chosen.type });
-        if (upload.error) throw upload.error;
-        const { data: pub } = sb.storage.from('member-photos').getPublicUrl(path);
-        const res = await sb.from('members').update({ photo_url: pub.publicUrl }).eq('id', member.id);
-        if (res.error) throw res.error;
-        toastLive('Member photo updated.');
-        await refreshData(true);
-        openStaffMember(id);
-      } catch (error) {
-        if (label) label.textContent = member.photo_url ? 'Change photo' : 'Upload photo';
-        toastLive(friendly(error));
-      }
-    };
-    const photoRemove = form.querySelector('#staff-photo-remove');
-    if (photoRemove) photoRemove.onclick = async () => {
-      try {
-        await sb.from('members').update({ photo_url: null }).eq('id', member.id);
-        toastLive('Photo removed.');
-        await refreshData(true);
-        openStaffMember(id);
-      } catch (error) { toastLive(friendly(error)); }
-    };
-
-    form.querySelector('.status-toggle').onclick = async () => {
-      const next = member.status === 'Active' ? 'Deactivated' : 'Active';
-      const ok = await confirmDialog({ title: next === 'Active' ? 'Reactivate this member?' : 'Deactivate this member?', body: next === 'Active' ? 'Reactivating lets them check in again. Confirm only after payment or an owner decision.' : 'Deactivated members can’t check in. The record and history stay available.', confirm: next === 'Active' ? 'Reactivate' : 'Deactivate' });
-      if (!ok) return;
-      try { await ui.call('set_member_status', { p_member_id: id, p_status: next, p_reason: null }); await refreshData(true); openStaffMember(id); } catch (error) { toastLive(friendly(error)); }
-    };
-    const staffDelBtn = form.querySelector('.staff-delete-member');
-    if (staffDelBtn) staffDelBtn.onclick = async () => {
-      const ok = await confirmDialog({
-        title: `Delete ${member.full_name}?`,
-        body: `This permanently removes <b>${esc(member.full_name)}</b> (${esc(member.member_no)}), their check-ins, and passes. This cannot be undone.`,
-        confirm: 'Delete permanently'
-      });
-      if (!ok) return;
-      try {
-        await ui.call('delete_member', { p_member_id: id, p_reason: 'Deleted by staff' });
-        toastLive(`${member.full_name} deleted.`);
-        await refreshData(true);
-        renderStaffMembers();
-      } catch (error) { toastLive(friendly(error)); }
-    };
-    form.querySelector('.profile-form').onsubmit = async event => {
-      event.preventDefault();
-      const name = form.querySelector('.p-name').value.trim();
-      if (!name) return toastLive('Full name is required.');
-      try {
-        await ui.call('update_member_details', {
-          p_member_id: id,
-          p_full_name: name,
-          p_phone: form.querySelector('.p-phone').value.trim() || null,
-          p_email: form.querySelector('.p-email').value.trim() || null,
-          p_address: form.querySelector('.p-address').value.trim() || null,
-          p_emergency_contact: form.querySelector('.p-emergency').value.trim() || null
-        });
-        toastLive('Changes saved.');
-        await refreshData(true);
-        openStaffMember(id);
-      } catch (error) { toastLive(friendly(error)); }
-    };
+    openMemberProfileModal(id);
   }
 
   function addMemberLive(onDone) {
@@ -2580,6 +2591,19 @@
           <p>Fields marked <span class="req-star">*</span> are required. Creates the member, records payment, and sets up their portal password.</p>
         </div>
         <button type="button" class="renew-close" aria-label="Close">×</button>
+      </div>
+
+      <div class="add-photo-row">
+        <div class="add-photo-preview" id="m-photo-preview"><span>+</span></div>
+        <div class="add-photo-meta">
+          <div class="add-photo-title">Member photo <span class="opt-badge">Optional</span></div>
+          <div class="add-photo-controls">
+            <label class="outline photo-upload" style="cursor:pointer" for="m-photo-file">Upload photo</label>
+            <input type="file" id="m-photo-file" accept="image/jpeg,image/png,image/webp" hidden>
+            <button type="button" class="outline" id="m-photo-remove" hidden>Remove</button>
+          </div>
+          <small>JPG, PNG or WebP up to 2 MB · uploaded automatically when created.</small>
+        </div>
       </div>
 
       <div class="modal-two-col">
@@ -2655,10 +2679,49 @@
     </form>`;
 
     document.body.append(box);
-    const close = () => { box.close(); box.remove(); };
+    let chosenPhoto = null;
+    let previewUrl = '';
+    const revokePreview = () => { if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = ''; } };
+    const close = () => { revokePreview(); box.close(); box.remove(); };
     box.querySelector('.renew-close').onclick = close;
     box.querySelector('.cancel-add').onclick = close;
     box.addEventListener('cancel', e => { e.preventDefault(); close(); });
+
+    const photoPreview = box.querySelector('#m-photo-preview');
+    const photoInput = box.querySelector('#m-photo-file');
+    const photoRemove = box.querySelector('#m-photo-remove');
+    const photoLabel = box.querySelector('.photo-upload');
+    const nameInput = box.querySelector('#m-name');
+    const syncInitialPreview = () => {
+      if (chosenPhoto) return;
+      const typed = nameInput.value.trim();
+      photoPreview.innerHTML = `<span>${typed ? esc(initials(typed)) : '+'}</span>`;
+    };
+    nameInput.addEventListener('input', syncInitialPreview);
+
+    photoInput.onchange = async () => {
+      const file = photoInput.files?.[0];
+      if (!file) return;
+      try { await validateImage(file); }
+      catch (invalidFile) {
+        photoInput.value = '';
+        return toastLive(invalidFile.message);
+      }
+      revokePreview();
+      chosenPhoto = file;
+      previewUrl = URL.createObjectURL(file);
+      photoPreview.innerHTML = `<img src="${esc(previewUrl)}" alt="Preview">`;
+      photoLabel.textContent = 'Change photo';
+      photoRemove.hidden = false;
+    };
+    photoRemove.onclick = () => {
+      chosenPhoto = null;
+      revokePreview();
+      photoInput.value = '';
+      photoLabel.textContent = 'Upload photo';
+      photoRemove.hidden = true;
+      syncInitialPreview();
+    };
 
     const errEl = box.querySelector('#m-form-error');
     const pwInput = box.querySelector('#m-password');
@@ -2681,7 +2744,7 @@
     box.querySelector('#add-member-form').onsubmit = async event => {
       event.preventDefault();
       errEl.textContent = '';
-      const name = box.querySelector('#m-name').value.trim();
+      const name = nameInput.value.trim();
       const phone = box.querySelector('#m-phone').value.trim();
       const email = box.querySelector('#m-email').value.trim().toLowerCase();
       const password = pwInput.value;
@@ -2694,7 +2757,7 @@
       const address = box.querySelector('#m-address').value.trim();
       const emergency = box.querySelector('#m-emergency').value.trim();
 
-      if (!name) { errEl.textContent = 'Full name is required.'; box.querySelector('#m-name').focus(); return; }
+      if (!name) { errEl.textContent = 'Full name is required.'; nameInput.focus(); return; }
       if (!phone) { errEl.textContent = 'Mobile number is required.'; box.querySelector('#m-phone').focus(); return; }
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'Enter a valid email address.'; box.querySelector('#m-email').focus(); return; }
       if (!password || password.length < 8) { errEl.textContent = 'Password is required (minimum 8 characters).'; pwInput.focus(); return; }
@@ -2725,14 +2788,29 @@
           p_paid_on: start,
           p_description: method === 'Cash' ? 'New membership' : 'New membership · online payment'
         });
+        let photoNote = '';
+        if (chosenPhoto) {
+          try {
+            const ext = chosenPhoto.type === 'image/png' ? 'png' : chosenPhoto.type === 'image/webp' ? 'webp' : 'jpg';
+            const path = `${created.id}/${Date.now()}.${ext}`;
+            const upload = await sb.storage.from('member-photos').upload(path, chosenPhoto, { upsert: true, contentType: chosenPhoto.type });
+            if (upload.error) throw upload.error;
+            const { data: pub } = sb.storage.from('member-photos').getPublicUrl(path);
+            const res = await sb.from('members').update({ photo_url: pub.publicUrl }).eq('id', created.id);
+            if (res.error) throw res.error;
+            photoNote = ' · photo uploaded';
+          } catch (photoErr) {
+            photoNote = ' · photo failed (can upload from profile)';
+          }
+        }
         const loginRes = await sb.functions.invoke('create-member-login', {
           body: { member_id: created.id, email, password }
         });
         if (loginRes.error || loginRes.data?.error) {
           const code = loginRes.data?.error || loginRes.error?.message || 'LOGIN_CREATE_FAILED';
-          toastLive(`${name} saved (${created.member_no}), but login failed: ${code}`);
+          toastLive(`${name} saved (${created.member_no})${photoNote}, but login failed: ${code}`);
         } else {
-          toastLive(`${name} added · ${created.member_no} · portal account created`);
+          toastLive(`${name} added · ${created.member_no}${photoNote} · portal account created`);
         }
         close();
         await refreshData(true);
@@ -2747,7 +2825,7 @@
     };
 
     box.showModal();
-    box.querySelector('#m-name').focus();
+    nameInput.focus();
   }
 
   function openRenewalLive(memberId) {
@@ -2816,7 +2894,8 @@
         dialog.close();
         toastLive(payment.status === 'pending' ? `Renewal saved · ${payment.receipt_no} · waiting for owner verification.` : `Membership renewed · ${payment.receipt_no} · now expires ${fmtDay(payment.new_expiry)}.`);
         await refreshData(true);
-        refreshStaff();
+        if (currentRole === 'owner') renderOwnerMembers();
+        else refreshStaff();
       } catch (error) { toastLive(friendly(error)); }
     };
     dialog.querySelector('#renew-close').onclick = () => dialog.close();
