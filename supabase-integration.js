@@ -22,6 +22,7 @@ const live = {
   walkins: [],
   activity: [],
   requests: [],
+  approvals: [],
   team: [],
   settings: null,
   shifts: [],
@@ -31,6 +32,8 @@ const live = {
   activityKinds: [],
   summary: null,
   period: 'month',
+  customFrom: null,
+  customTo: null,
   lastSync: null
 };
 
@@ -77,8 +80,12 @@ function friendly(error) {
     MEMBER_NOT_FOUND: 'Member not found.',
     NAME_REQUIRED: 'Full name is required.',
     EMAIL_IN_USE: 'That email address is already used by another account.',
+    EMAIL_INVALID: 'Enter a valid email address.',
+    INVALID_ROLE: 'Choose either Owner or Staff for a team account.',
+    CANNOT_DEACTIVATE_SELF: 'You can’t deactivate your own account.',
     PASSWORD_TOO_SHORT: 'Password must be at least 8 characters.',
-    PERMISSION_DENIED: 'Your account doesn’t have permission for this action. Ask the owner.'
+    PERMISSION_DENIED: 'Your account doesn’t have permission for this action. Ask the owner.',
+    ALREADY_REQUESTED: 'This request is already pending owner approval.'
   };
   const msg = String(error?.message || error || '');
   for (const key of Object.keys(map)) if (msg.includes(key)) return msg.includes('INSUFFICIENT_STOCK:') ? `Not enough stock for ${msg.split(':')[1]}.` : map[key];
@@ -114,7 +121,7 @@ async function signUpFirstOwner(email, password, fullName) {
 }
 
 async function loadAll() {
-  const [members, plans, inventory, payments, visits, sales, movements, walkins, activity, requests, team, settings, summary, shifts, expensesAll, broadcasts, feedback, kinds] = await Promise.all([
+  const [members, plans, inventory, payments, visits, sales, movements, walkins, activity, requests, approvals, team, settings, summary, shifts, expensesAll, broadcasts, feedback, kinds] = await Promise.all([
     sb.from('member_directory').select('*').order('created_at', { ascending: false }),
     sb.from('membership_plans').select('*').order('months'),
     sb.from('inventory_items').select('*').order('name'),
@@ -125,6 +132,7 @@ async function loadAll() {
     sb.from('walkins').select('*').order('created_at', { ascending: false }).limit(40),
     sb.from('activity_log').select('*').order('created_at', { ascending: false }).limit(80),
     sb.from('profile_change_requests').select('*').order('created_at', { ascending: false }).limit(40),
+    sb.from('approval_requests').select('*').order('created_at', { ascending: false }).limit(60),
     sb.rpc('list_team'),
     sb.from('gym_settings').select('*').limit(1).maybeSingle(),
     window.ownerSummary(),
@@ -134,7 +142,7 @@ async function loadAll() {
     sb.from('feedback').select('*').order('created_at', { ascending: false }).limit(200),
     sb.rpc('activity_kinds')
   ]);
-  for (const res of [members, plans, inventory, payments, visits, sales, movements, walkins, activity, requests, team, settings, summary, shifts, expensesAll, broadcasts, feedback, kinds]) {
+  for (const res of [members, plans, inventory, payments, visits, sales, movements, walkins, activity, requests, approvals, team, settings, summary, shifts, expensesAll, broadcasts, feedback, kinds]) {
     if (res?.error) console.warn('GIMMDA data', res.error);
   }
   live.members = members.data || [];
@@ -147,6 +155,7 @@ async function loadAll() {
   live.walkins = walkins.data || [];
   live.activity = activity.data || [];
   live.requests = requests.data || [];
+  live.approvals = approvals?.data || [];
   live.team = team.data || [];
   live.settings = settings.data || null;
   live.shifts = shifts?.data || [];
@@ -176,6 +185,16 @@ function yearRange() {
   const today = phToday();
   return { from: today.slice(0, 4) + '-01-01', to: today };
 }
+function lastMonthRange() {
+  const [y, m] = phToday().split('-').map(Number);
+  const start = new Date(Date.UTC(y, m - 2, 1));
+  const end = new Date(Date.UTC(y, m - 1, 0));
+  return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+}
+function lastYearRange() {
+  const y = Number(phToday().slice(0, 4)) - 1;
+  return { from: `${y}-01-01`, to: `${y}-12-31` };
+}
 function weekRange() {
   const now = new Date();
   const ph = new Date(now.toLocaleString('en-US', { timeZone: PH_TZ }));
@@ -187,8 +206,11 @@ function weekRange() {
 function periodRange(p = live.period) {
   if (p === 'today') return todayRange();
   if (p === 'week') return weekRange();
+  if (p === 'last_month') return lastMonthRange();
   if (p === 'year') return yearRange();
+  if (p === 'last_year') return lastYearRange();
+  if (p === 'custom' && live.customFrom && live.customTo) return { from: live.customFrom, to: live.customTo };
   return monthRange();
 }
 
-window.GIMMDA = { TURNSTILE_SITE_KEY, live, sb, call, loadAll, signUpFirstOwner, friendly, planLabel, peso, phToday, phDateTime, fmtDay, chTime, escHtml, dash, initials, ownerSummary, todayRange, monthRange, weekRange, yearRange, periodRange };
+window.GIMMDA = { TURNSTILE_SITE_KEY, live, sb, call, loadAll, signUpFirstOwner, friendly, planLabel, peso, phToday, phDateTime, fmtDay, chTime, escHtml, dash, initials, ownerSummary, todayRange, monthRange, weekRange, yearRange, lastMonthRange, lastYearRange, periodRange };

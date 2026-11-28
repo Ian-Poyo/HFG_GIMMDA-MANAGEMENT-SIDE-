@@ -336,8 +336,29 @@
     settings?.click();
   });
   document.querySelector('.topright .iconbtn[title="Notifications"]')?.addEventListener('click', () => {
-    const items = live.activity.slice(0, 10);
-    dialog({ title: 'Gym notifications', body: items.length ? items.map(a => `<strong>${esc(a.summary)}</strong><br><span style="color:#8b9a8d">${esc(a.actor_name || 'Gym')} · ${esc(phDateTime(a.created_at))}</span>`).join('<hr style="border:0;border-top:1px solid #eef2ec;margin:11px 0">') : 'No activity recorded yet.', action: 'Close' });
+    const pendingAppr = (live.approvals || []).filter(a => a.status === 'pending');
+    const pendingPay = live.payments.filter(p => p.status === 'pending');
+    const pendingReq = live.requests.filter(r => r.status === 'pending');
+    const pendingTotal = pendingAppr.length + pendingPay.length + pendingReq.length;
+    const pendingHtml = pendingTotal ? `<div style="background:#f5f9ef;border:1px solid #d9e9c8;border-radius:12px;padding:12px 14px;margin-bottom:14px">
+      <b style="color:#1e3a24;display:block;margin-bottom:6px">${pendingTotal} pending approval${pendingTotal === 1 ? '' : 's'} waiting</b>
+      ${pendingAppr.map(a => `<div style="font-size:12px;color:#35513b;margin-top:4px">• ${esc(a.target_label)} (${esc(a.requested_by_name || 'Staff')}: "${esc(a.reason)}")</div>`).join('')}
+      ${pendingPay.map(p => `<div style="font-size:12px;color:#35513b;margin-top:4px">• ${esc(p.member_name || 'Member')} online payment (${peso(p.amount)})</div>`).join('')}
+      ${pendingReq.map(() => `<div style="font-size:12px;color:#35513b;margin-top:4px">• Member profile change request</div>`).join('')}
+    </div>` : '';
+    const items = live.activity.slice(0, 8);
+    const body = pendingHtml + (items.length ? items.map(a => `<strong>${esc(a.summary)}</strong><br><span style="color:#8b9a8d">${esc(a.actor_name || 'Gym')} · ${esc(phDateTime(a.created_at))}</span>`).join('<hr style="border:0;border-top:1px solid #eef2ec;margin:11px 0">') : 'No activity recorded yet.');
+    dialog({
+      title: 'Notifications & approvals',
+      body,
+      action: pendingTotal ? 'Review approvals ↗' : 'Close',
+      onAction: () => {
+        if (!pendingTotal) return;
+        const ovBtn = [...ownerNav.querySelectorAll('button')].find(b => b.textContent.trim() === 'Overview');
+        ovBtn?.click();
+        setTimeout(() => document.querySelector('#needs-review-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
+      }
+    });
   });
   const searchBox = document.querySelector('.searchbox');
   const searchButton = document.querySelector('#search');
@@ -750,6 +771,9 @@
     const active = nav.querySelector('button.active');
     if (!active) return;
     clearTimeout(navSettleTimer);
+    if (nav.scrollWidth > nav.clientWidth + 2) {
+      active.scrollIntoView({ block: 'nearest', inline: 'center' });
+    }
     const apply = () => {
       const navBox = nav.getBoundingClientRect();
       const box = active.getBoundingClientRect();
@@ -760,6 +784,10 @@
     requestAnimationFrame(apply);
     navSettleTimer = setTimeout(apply, 420);
   }
+  window.addEventListener('resize', () => {
+    if (ownerNav && !ownerShell.hidden) revealNavigation(ownerNav);
+    if (staffNav && !staffShell.hidden) revealNavigation(staffNav);
+  });
 
   async function refreshData(quiet) {
     try {
@@ -801,8 +829,11 @@
     revealNavigation(nav);
   }
 
-  const PERIOD_LABELS = { today: 'Today', week: 'This week', month: 'This month', year: 'This year' };
+  const PERIOD_LABELS = { today: 'Today', week: 'This week', month: 'This month', last_month: 'Last month', year: 'This year', last_year: 'Last year' };
   const periodText = (lower = false) => {
+    if (live.period === 'custom' && live.customFrom && live.customTo) {
+      return `${fmtDay(live.customFrom)} – ${fmtDay(live.customTo)}`;
+    }
     const t = PERIOD_LABELS[live.period] || 'This month';
     return lower ? t.toLowerCase() : t;
   };
@@ -1057,9 +1088,16 @@
     if (item) {
       event.stopImmediatePropagation();
       event.preventDefault();
-      live.period = item.dataset.period;
-      syncPeriodControl(ownerNav.querySelector('button.active')?.textContent.trim() || 'Overview');
+      const chosen = item.dataset.period;
       const view = ownerNav.querySelector('button.active')?.textContent.trim() || 'Overview';
+      if (chosen === 'custom') {
+        if (periodMenu) periodMenu.hidden = true;
+        periodButton?.setAttribute('aria-expanded', 'false');
+        openCustomPeriodDialog(view);
+        return;
+      }
+      live.period = chosen;
+      syncPeriodControl(view);
       refreshData(true).then(() => { refreshOwner(view, true); });
       return;
     }
@@ -1084,6 +1122,45 @@
     }
   });
 
+  function openCustomPeriodDialog(view) {
+    const today = phToday();
+    const cur = currentPeriodRange();
+    const box = document.createElement('dialog');
+    box.className = 'renew-dialog';
+    box.innerHTML = `<form class="renew-inner" id="custom-period-form">
+      <div class="renew-header"><div><div class="eyebrow" style="color:#87a278">BACKTRACK DATES</div><h2>Custom date range</h2><p>Filter Overview, Reports, and Finance to any past dates.</p></div><button type="button" class="renew-close" aria-label="Close">×</button></div>
+      <div class="modal-two-col" style="margin-top:14px">
+        <div><label class="field" for="cp-from">From</label><input id="cp-from" type="date" class="login-input" value="${esc(cur.from)}" max="${today}" required></div>
+        <div><label class="field" for="cp-to">To</label><input id="cp-to" type="date" class="login-input" value="${esc(cur.to)}" max="${today}" required></div>
+      </div>
+      <p class="login-note" id="cp-note" role="status"></p>
+      <div class="renew-actions"><button type="button" class="outline cp-cancel">Cancel</button><button type="submit" class="login-submit">Apply range ↗</button></div>
+    </form>`;
+    document.body.append(box);
+    const close = () => { box.close(); box.remove(); };
+    box.querySelector('.renew-close').onclick = close;
+    box.querySelector('.cp-cancel').onclick = close;
+    box.addEventListener('cancel', e => { e.preventDefault(); close(); });
+    box.querySelector('#custom-period-form').onsubmit = e => {
+      e.preventDefault();
+      const from = box.querySelector('#cp-from').value;
+      const to = box.querySelector('#cp-to').value;
+      if (!from || !to || to < from) {
+        const note = box.querySelector('#cp-note');
+        note.textContent = 'End date must be on or after the start date.';
+        note.style.color = '#a6453b';
+        return;
+      }
+      live.customFrom = from;
+      live.customTo = to;
+      live.period = 'custom';
+      close();
+      syncPeriodControl(view);
+      refreshData(true).then(() => refreshOwner(view, true));
+    };
+    box.showModal();
+  }
+
   function refreshOwner(tab, animate = true) {
     paintGreeting();
     markLive(ownerContent);
@@ -1091,6 +1168,7 @@
     else if (tab === 'Members') renderOwnerMembers();
     else if (tab === 'Staff') renderOwnerTeam();
     else if (tab === 'Reports') renderOwnerReports();
+    else if (tab === 'Analytics') renderOwnerAnalytics();
     else if (tab === 'Settings') renderOwnerSettings();
     else if (tab === 'Inventory') renderOwnerInventory();
     else if (tab === 'Finance') renderOwnerFinance();
@@ -1144,6 +1222,12 @@
     const visits7 = days7.map(d => live.visits.filter(v => String(v.visit_date).slice(0, 10) === d.iso).length);
     const peak7 = Math.max(0, ...rev7);
     const review = [
+      ...(live.approvals || []).filter(a => a.status === 'pending').map(a => ({
+        icon: '!',
+        title: `${a.target_label}`,
+        sub: `${a.kind.replace(/_/g, ' ')} · requested by ${a.requested_by_name || 'Staff'} · "${a.reason}"`,
+        action: `<button class="outline staff-approval-review" data-id="${a.id}">Review</button>`
+      })),
       ...pending.map(p => ({ icon: '₱', title: `${p.member_name || 'Member'} · ${peso(p.amount)}`, sub: `${p.method} payment needs verification · ${p.receipt_no}`, action: `<button class="outline pay-approve" data-id="${p.id}">Verify</button>` })),
       ...live.requests.filter(r => r.status === 'pending').map(r => { const m = live.members.find(x => x.id === r.member_id); return { icon: '✎', title: m?.full_name || 'Member', sub: 'Profile change request', action: `<button class="outline request-approve" data-id="${r.id}">Review</button>` }; })
     ];
@@ -1216,8 +1300,8 @@
       </div>
 
       <div class="rp-mid">
-        <section class="card rp-new-card">
-          <div class="panel-head"><div><div class="staff-kicker">NEEDS YOU</div><h3>Needs your review</h3><p>Online payments and profile requests.</p></div><span class="rp-pill">${review.length} waiting</span></div>
+        <section class="card rp-new-card" id="needs-review-card">
+          <div class="panel-head"><div><div class="staff-kicker">NEEDS YOU</div><h3>Needs your review</h3><p>Staff void/deletion requests, online payments, and profile changes.</p></div><span class="rp-pill">${review.length} waiting</span></div>
           ${review.length ? review.map(r => `<div class="activity"><div class="activity-icon">${r.icon}</div><div class="activity-text"><b>${esc(r.title)}</b><br>${esc(r.sub)}</div>${r.action}</div>`).join('') : '<p class="sub" style="padding:8px 0">Nothing waiting for approval. You are all caught up.</p>'}
         </section>
 
@@ -1231,8 +1315,72 @@
         <div class="activity-list">${recent.length ? recent.map(p => `<div class="activity"><div class="activity-icon">₱</div><div class="activity-text"><b>${esc(nameOf(p))} · ${peso(p.amount)}</b><br>${esc(p.method)} · ${esc(p.receipt_no)} · ${esc(p.status)}</div><div class="activity-time">${esc(phDateTime(p.created_at))}</div></div>`).join('') : '<p class="sub" style="padding:10px 0">No payments recorded yet.</p>'}</div>
       </section>`;
 
+    ownerContent.querySelectorAll('.staff-approval-review').forEach(button => button.onclick = () => reviewStaffApproval(button.dataset.id));
     ownerContent.querySelectorAll('.pay-approve').forEach(button => button.onclick = () => reviewPayment(button.dataset.id));
     ownerContent.querySelectorAll('.request-approve').forEach(button => button.onclick = () => reviewRequest(button.dataset.id));
+  }
+
+  function hasPendingApproval(kind, targetId) {
+    return (live.approvals || []).some(a => a.status === 'pending' && a.kind === kind && a.target_id === targetId);
+  }
+
+  async function requestOwnerApproval(kind, targetId, label, onDone) {
+    const kindLabels = {
+      void_walkin: 'Void walk-in entry',
+      void_sale: 'Void product sale',
+      void_payment: 'Void payment',
+      delete_member: 'Delete member record'
+    };
+    const reason = await askReason(kindLabels[kind] || 'Request owner approval', `Staff cannot delete or void records directly. Explain why "${label}" needs to be reversed or deleted — this goes straight to the owner for approval.`);
+    if (!reason) return;
+    try {
+      await ui.call('request_staff_approval', { p_kind: kind, p_target_id: targetId, p_reason: reason });
+      toastLive('Request sent to the owner for approval.');
+      await refreshData(true);
+      if (typeof onDone === 'function') onDone();
+    } catch (error) { toastLive(friendly(error)); }
+  }
+
+  async function reviewStaffApproval(id) {
+    const req = (live.approvals || []).find(a => a.id === id);
+    if (!req) return;
+    const kindLabels = {
+      void_walkin: 'Void walk-in entry',
+      void_sale: 'Void product sale (restores stock)',
+      void_payment: 'Void membership payment',
+      delete_member: 'Permanently delete member'
+    };
+    const decision = await new Promise(resolve => {
+      const box = document.createElement('dialog');
+      box.className = 'renew-dialog';
+      box.innerHTML = `<div class="renew-inner">
+        <div class="renew-header"><div><div class="eyebrow" style="color:#87a278">OWNER APPROVAL</div><h2>${esc(kindLabels[req.kind] || 'Staff approval request')}</h2></div><button type="button" class="renew-close" aria-label="Close">×</button></div>
+        <p style="margin:14px 0;color:#415647;font-size:13px;line-height:1.7">
+          <b>${esc(req.target_label)}</b><br>
+          Requested by <b>${esc(req.requested_by_name || 'Staff')}</b> · ${esc(phDateTime(req.created_at))}<br><br>
+          <b>Reason:</b> ${esc(req.reason)}
+        </p>
+        <p class="sub" style="margin:0 0 14px">Approving immediately applies this change and logs it to Activity. Closing this window leaves it pending.</p>
+        <div class="renew-actions">
+          <button type="button" class="outline" id="apv-reject">Reject</button>
+          <button type="button" class="login-submit" id="apv-approve">Approve &amp; apply</button>
+        </div>
+      </div>`;
+      document.body.append(box);
+      const done = val => { box.close(); box.remove(); resolve(val); };
+      box.querySelector('.renew-close').onclick = () => done(null);
+      box.querySelector('#apv-reject').onclick = () => done(false);
+      box.querySelector('#apv-approve').onclick = () => done(true);
+      box.addEventListener('cancel', e => { e.preventDefault(); done(null); });
+      box.showModal();
+    });
+    if (decision === null) return;
+    try {
+      await ui.call('review_staff_approval', { p_request_id: id, p_approve: !!decision, p_note: decision ? null : 'Declined by owner' });
+      toastLive(decision ? 'Request approved and applied.' : 'Request rejected — record kept unchanged.');
+      await refreshData(true);
+      renderOwnerOverview();
+    } catch (error) { toastLive(friendly(error)); }
   }
 
   async function reviewPayment(id) {
@@ -1469,7 +1617,11 @@
             : archived ? `<button type="button" class="outline" id="act-restore">Restore member</button>`
             : `<button type="button" class="outline" id="act-freeze">Freeze / hold</button><button type="button" class="outline" id="act-merge">Merge</button><button type="button" class="outline" id="act-archive">Archive</button>`
           ) : ''}
-          <button type="button" class="outline member-act-danger ${isOwnerView ? '' : 'staff-delete-member'}" id="act-delete">Delete member</button>
+          ${isOwnerView
+            ? '<button type="button" class="outline member-act-danger" id="act-delete">Delete member</button>'
+            : (hasPendingApproval('delete_member', member.id)
+              ? '<button type="button" class="outline member-act-danger staff-delete-member" id="act-delete" disabled>Deletion pending owner</button>'
+              : '<button type="button" class="outline member-act-danger staff-delete-member" id="act-delete">Request deletion</button>')}
         </div>
 
         ${frozen ? `<div class="frozen-banner" style="margin:0">Frozen until <b>${esc(fmtDay(member.frozen_until))}</b> — expiry moved to ${esc(fmtDay(member.expires_on))}.<br><small>${esc(member.freeze_reason || '')}</small></div>` : ''}
@@ -1743,7 +1895,11 @@
           <button class="outline member-act" id="act-freeze">Freeze / hold</button>
           <button class="outline member-act" id="act-merge">Merge duplicate</button>
           <button class="outline member-act" id="act-archive">Archive</button>
-          <button class="outline member-act member-act-danger" id="act-delete">Delete member</button>
+          ${currentRole === 'owner'
+            ? '<button class="outline member-act member-act-danger" id="act-delete">Delete member</button>'
+            : (hasPendingApproval('delete_member', member.id)
+              ? '<button class="outline member-act member-act-danger" id="act-delete" disabled>Deletion pending owner</button>'
+              : '<button class="outline member-act member-act-danger" id="act-delete">Request deletion</button>')}
         </div>`}
     </div>`;
   }
@@ -1816,6 +1972,10 @@
     if (merge) merge.onclick = () => mergeDialog(member, rerender);
     const delBtn = detail.querySelector('#act-delete');
     if (delBtn) delBtn.onclick = async () => {
+      if (currentRole !== 'owner') {
+        await requestOwnerApproval('delete_member', member.id, `${member.full_name} (${member.member_no})`, rerender);
+        return;
+      }
       const ok = await confirmDialog({
         title: `Delete ${member.full_name}?`,
         body: `This permanently deletes <b>${esc(member.full_name)}</b> (${esc(member.member_no)}), their attendance visits, and passes. This cannot be undone — use <b>Archive</b> if you want to keep the profile.<br><br>Proceed with permanent deletion?`,
@@ -1952,8 +2112,327 @@
     box.showModal();
   }
 
+  async function openTeamAccountModal(userId) {
+    const account = live.team.find(t => t.id === userId);
+    if (!account) return;
+    document.querySelector('#team-account-dialog')?.remove();
+
+    const isSelf = account.id === live.profile.id;
+    let existingPerms = {};
+    try {
+      const { data } = await sb.from('staff_permissions').select('*').eq('staff_id', account.id).maybeSingle();
+      existingPerms = data || {};
+    } catch { /* fallback to defaults */ }
+
+    const box = document.createElement('dialog');
+    box.className = 'renew-dialog member-profile-dialog';
+    box.id = 'team-account-dialog';
+    box.innerHTML = `
+      <div class="mp-head">
+        <img class="mp-head-watermark" src="green-emblem.png" alt="" aria-hidden="true">
+        <div class="mp-head-top">
+          <div class="mp-brand">
+            <span class="mp-brand-badge"><img src="green-emblem.png" alt="GIMMDA"></span>
+            <div>
+              <div class="eyebrow">TEAM ACCOUNT</div>
+              <span class="mp-brand-sub">GIMMDA · HILL FITNESS GYM</span>
+            </div>
+          </div>
+          <button type="button" class="mp-close" aria-label="Close">×</button>
+        </div>
+        <div class="mp-identity">
+          <div class="mp-avatar"><span>${esc(initials(account.full_name || account.email))}</span></div>
+          <div class="mp-id-info">
+            <h2>${esc(account.full_name || 'Unnamed account')}</h2>
+            <p>${esc(account.email || '')}${isSelf ? ' · Your account' : ''}</p>
+          </div>
+          <span class="status-tag ${account.is_active ? '' : 'status-deactivated'}">${account.is_active ? 'Active' : 'Deactivated'}</span>
+        </div>
+        <div class="mp-plan-strip">
+          <div><small>ROLE</small><strong>${account.role === 'owner' ? 'Owner' : 'Staff'}</strong></div>
+          <div><small>ACCESS</small><strong>${account.is_active ? 'Can sign in' : 'Blocked'}</strong></div>
+          <div><small>ADDED</small><strong>${esc(account.created_at ? fmtDay(String(account.created_at).slice(0, 10)) : '—')}</strong></div>
+          <div><small>SCOPE</small><strong>${account.role === 'owner' ? 'Full gym' : 'Per permissions'}</strong></div>
+        </div>
+      </div>
+
+      <form class="mp-body" id="ta-form">
+        <div class="mp-card">
+          <div class="mp-card-title">ACCOUNT &amp; ROLE <span>Edit &amp; save changes</span></div>
+          <div class="modal-two-col">
+            <div class="modal-span-2">
+              <label class="field" for="ta-name">Full name</label>
+              <input class="login-input" id="ta-name" value="${esc(account.full_name || '')}" maxlength="100" placeholder="e.g. Sam Santos" required>
+            </div>
+            <div>
+              <label class="field" for="ta-role">Role</label>
+              <select class="login-input" id="ta-role" ${isSelf ? 'disabled' : ''}>
+                <option value="owner" ${account.role === 'owner' ? 'selected' : ''}>Owner</option>
+                <option value="staff" ${account.role === 'staff' ? 'selected' : ''}>Staff</option>
+              </select>
+              ${isSelf ? '<p class="sub" style="margin:6px 0 0">You can’t change your own owner role.</p>' : ''}
+            </div>
+            <div>
+              <label class="field" for="ta-active">Account status</label>
+              <select class="login-input" id="ta-active" ${isSelf ? 'disabled' : ''}>
+                <option value="true" ${account.is_active ? 'selected' : ''}>Active — can sign in</option>
+                <option value="false" ${!account.is_active ? 'selected' : ''}>Deactivated — sign-in blocked</option>
+              </select>
+              ${isSelf ? '<p class="sub" style="margin:6px 0 0">You can’t deactivate your own account.</p>' : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="mp-card" id="ta-perms-card" ${account.role === 'staff' ? '' : 'hidden'}>
+          <div class="mp-card-title">STAFF PERMISSIONS <span>Enforced by database</span></div>
+          <div class="perm-list">${PERMISSION_LABELS.map(([key, label, help]) => {
+            const on = key === 'can_void' ? existingPerms.can_void === true : existingPerms[key] !== false;
+            return `<label class="perm-row"><span><b>${label}</b><small>${help}</small></span><input type="checkbox" data-perm="${key}" ${on ? 'checked' : ''}></label>`;
+          }).join('')}</div>
+        </div>
+
+        <div class="mp-form-foot" style="padding:0 2px">
+          <button type="button" class="outline" id="ta-cancel">Cancel</button>
+          <button type="submit" class="login-submit" id="ta-save" style="width:auto;padding:0 20px">Save changes ↗</button>
+        </div>
+
+        ${isSelf
+          ? `<div class="mp-card"><div class="mp-card-title">SECURITY</div><p class="sub" style="margin:0">To change your own password, open <b>Settings → Account</b>.</p></div>`
+          : `<div class="mp-card">
+              <div class="mp-card-title">SECURITY &amp; ACCOUNT ACTIONS</div>
+              <div class="mp-action-bar">
+                <button type="button" class="outline" id="ta-reset">Reset password</button>
+                ${account.role === 'staff' ? '<button type="button" class="outline member-act-danger" id="ta-delete">Delete staff</button>' : ''}
+              </div>
+              <p class="sub" style="margin:10px 0 0">Reset password issues a temporary one-time password and signs out active sessions.${account.role === 'staff' ? ' Deleting permanently removes their login while keeping historical records.' : ''}</p>
+            </div>`
+        }
+      </form>`;
+
+    document.body.append(box);
+    const close = () => { box.close(); box.remove(); };
+    box.querySelector('.mp-close').onclick = close;
+    box.querySelector('#ta-cancel').onclick = close;
+    box.addEventListener('cancel', e => { e.preventDefault(); close(); });
+
+    const roleSelect = box.querySelector('#ta-role');
+    const permsCard = box.querySelector('#ta-perms-card');
+    roleSelect?.addEventListener('change', () => {
+      if (permsCard) permsCard.hidden = roleSelect.value !== 'staff';
+    });
+
+    box.querySelector('#ta-form').onsubmit = async e => {
+      e.preventDefault();
+      const saveBtn = box.querySelector('#ta-save');
+      const fullName = box.querySelector('#ta-name').value.trim();
+      const nextRole = isSelf ? account.role : roleSelect.value;
+      const nextActive = isSelf ? true : box.querySelector('#ta-active').value === 'true';
+      if (!fullName) return toastLive('Full name is required.');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      try {
+        await ui.call('update_team_account', {
+          p_user: account.id,
+          p_full_name: fullName,
+          p_role: nextRole,
+          p_is_active: nextActive
+        });
+        if (nextRole === 'staff') {
+          const permRow = { staff_id: account.id };
+          box.querySelectorAll('#ta-perms-card input[data-perm]').forEach(input => {
+            permRow[input.dataset.perm] = input.checked;
+          });
+          const { error: permErr } = await sb.from('staff_permissions').upsert(permRow);
+          if (permErr) throw permErr;
+        }
+        close();
+        toastLive('Account changes saved.');
+        await refreshData(true);
+        if (account.id === live.profile.id) {
+          live.profile.full_name = fullName;
+          paintGreeting();
+        }
+        renderOwnerTeam();
+      } catch (error) {
+        toastLive(friendly(error));
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save changes ↗';
+      }
+    };
+
+    box.querySelector('#ta-reset')?.addEventListener('click', () => {
+      close();
+      resetTeamPassword(account);
+    });
+
+    box.querySelector('#ta-delete')?.addEventListener('click', async () => {
+      const label = account.full_name || account.email || 'this staff member';
+      const ok = await confirmDialog({
+        title: `Delete ${label}?`,
+        body: `This permanently deletes <b>${esc(label)}</b>${account.email ? ` (${esc(account.email)})` : ''}'s staff account and signs them out immediately. Past payments, check-ins, and activity logs they recorded are preserved.<br><br>Switch status to <b>Deactivated</b> instead if you only want to block sign-in temporarily.`,
+        confirm: 'Delete staff'
+      });
+      if (!ok) return;
+      const delBtn = box.querySelector('#ta-delete');
+      delBtn.disabled = true;
+      delBtn.textContent = 'Deleting…';
+      try {
+        const res = await sb.functions.invoke('delete-staff', { body: { user_id: account.id } });
+        if (res.error) throw res.error;
+        if (res.data?.error) throw new Error(res.data.detail || res.data.error);
+        close();
+        toastLive(`${label} deleted.`);
+        await refreshData(true);
+        renderOwnerTeam();
+      } catch (error) {
+        toastLive(friendly(error));
+        delBtn.disabled = false;
+        delBtn.textContent = 'Delete staff';
+      }
+    });
+
+    box.showModal();
+  }
+
+  function openAddStaffModal() {
+    document.querySelector('#add-staff-dialog')?.remove();
+    const box = document.createElement('dialog');
+    box.className = 'renew-dialog member-profile-dialog';
+    box.id = 'add-staff-dialog';
+    box.innerHTML = `
+      <div class="mp-head">
+        <img class="mp-head-watermark" src="green-emblem.png" alt="" aria-hidden="true">
+        <div class="mp-head-top">
+          <div class="mp-brand">
+            <span class="mp-brand-badge"><img src="green-emblem.png" alt="GIMMDA"></span>
+            <div>
+              <div class="eyebrow">NEW TEAM ACCOUNT</div>
+              <span class="mp-brand-sub">GIMMDA · HILL FITNESS GYM</span>
+            </div>
+          </div>
+          <button type="button" class="mp-close" aria-label="Close">×</button>
+        </div>
+        <div class="mp-identity">
+          <div class="mp-avatar"><span>+</span></div>
+          <div class="mp-id-info">
+            <h2>Add team member</h2>
+            <p>Create a staff or co-owner login for the gym dashboard.</p>
+          </div>
+        </div>
+      </div>
+
+      <form class="mp-body" id="ns-form">
+        <div class="mp-card">
+          <div class="mp-card-title">ACCOUNT DETAILS <span>Required</span></div>
+          <div class="modal-two-col">
+            <div>
+              <label class="field" for="ns-name">Full name</label>
+              <input class="login-input" id="ns-name" maxlength="100" placeholder="e.g. Sam Santos" required>
+            </div>
+            <div>
+              <label class="field" for="ns-role">Role</label>
+              <select class="login-input" id="ns-role">
+                <option value="staff" selected>Staff</option>
+                <option value="owner">Owner</option>
+              </select>
+            </div>
+            <div>
+              <label class="field" for="ns-email">Email address</label>
+              <input class="login-input" id="ns-email" type="email" maxlength="140" placeholder="staff@hillfitness.com" required>
+            </div>
+            <div>
+              <label class="field" for="ns-password">Initial password (optional)</label>
+              <input class="login-input" id="ns-password" type="password" minlength="8" placeholder="Leave blank to auto-generate">
+            </div>
+          </div>
+          <p class="sub" style="margin:10px 0 0">If left blank, a temporary password is generated and shown once for them to change on first sign-in.</p>
+        </div>
+
+        <div class="mp-card" id="ns-perms-card">
+          <div class="mp-card-title">STAFF PERMISSIONS <span>Enforced by database</span></div>
+          <div class="perm-list">${PERMISSION_LABELS.map(([key, label, help]) => {
+            const on = key !== 'can_void';
+            return `<label class="perm-row"><span><b>${label}</b><small>${help}</small></span><input type="checkbox" data-perm="${key}" ${on ? 'checked' : ''}></label>`;
+          }).join('')}</div>
+        </div>
+
+        <div class="mp-form-foot" style="padding:0 2px">
+          <button type="button" class="outline" id="ns-cancel">Cancel</button>
+          <button type="submit" class="login-submit" id="ns-submit" style="width:auto;padding:0 20px">Create account ↗</button>
+        </div>
+      </form>`;
+
+    document.body.append(box);
+    const close = () => { box.close(); box.remove(); };
+    box.querySelector('.mp-close').onclick = close;
+    box.querySelector('#ns-cancel').onclick = close;
+    box.addEventListener('cancel', e => { e.preventDefault(); close(); });
+
+    const roleSelect = box.querySelector('#ns-role');
+    const permsCard = box.querySelector('#ns-perms-card');
+    roleSelect.addEventListener('change', () => {
+      permsCard.hidden = roleSelect.value !== 'staff';
+    });
+
+    box.querySelector('#ns-form').onsubmit = async e => {
+      e.preventDefault();
+      const btn = box.querySelector('#ns-submit');
+      const full_name = box.querySelector('#ns-name').value.trim();
+      const email = box.querySelector('#ns-email').value.trim().toLowerCase();
+      const role = roleSelect.value;
+      const password = box.querySelector('#ns-password').value;
+      if (!full_name) return toastLive('Full name is required.');
+      if (password && password.length < 8) return toastLive('Password must be at least 8 characters.');
+
+      const permissions = {};
+      if (role === 'staff') {
+        box.querySelectorAll('#ns-perms-card input[data-perm]').forEach(input => {
+          permissions[input.dataset.perm] = input.checked;
+        });
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Creating…';
+      try {
+        const res = await sb.functions.invoke('create-staff', {
+          body: { full_name, email, role, password: password || undefined, permissions }
+        });
+        if (res.error) throw res.error;
+        if (res.data?.error) throw new Error(res.data.detail || res.data.error);
+        const created = res.data || {};
+        close();
+        await refreshData(true);
+        renderOwnerTeam();
+
+        if (created.temp_password) {
+          const pwBox = dialog({
+            title: 'Staff account created',
+            body: `<p><b>${esc(full_name)}</b> (${esc(email)}) can now sign in with this one-time temporary password. They will be prompted to set their own password on first login.</p>
+              <label class="field" style="margin-top:16px">Temporary password</label>
+              <input class="login-input" id="new-staff-temp-pw" value="${esc(created.temp_password)}" readonly style="font-family:monospace;letter-spacing:.5px">
+              <p class="sub" style="margin-top:8px">Copy this now — it will not be shown again.</p>`,
+            action: 'Done'
+          });
+          setTimeout(() => {
+            const field = pwBox.querySelector('#new-staff-temp-pw');
+            if (field) { field.select(); document.execCommand?.('copy'); }
+          }, 120);
+        } else {
+          toastLive(`${full_name} added to your team.`);
+        }
+      } catch (error) {
+        toastLive(friendly(error));
+        btn.disabled = false;
+        btn.textContent = 'Create account ↗';
+      }
+    };
+
+    box.showModal();
+    box.querySelector('#ns-name').focus();
+  }
+
   function renderOwnerTeam() {
-    const staff = live.team.filter(t => t.role !== 'member');
+    const staff = live.team.filter(t => t.role === 'owner' || t.role === 'staff');
     const active = staff.filter(t => t.is_active).length;
     const locked = staff.filter(t => !t.is_active).length;
     const today = new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' });
@@ -1967,6 +2446,7 @@
           <h2>Your team</h2>
           <p>Accounts that can sign in to the gym dashboard.</p>
         </div>
+        <button type="button" class="login-submit" id="open-add-staff" style="width:auto;padding:0 18px;height:42px">+ Add staff ↗</button>
       </div>
 
       <div class="rp-top">
@@ -1990,9 +2470,22 @@
 
       <div class="rp-mid">
         <section class="card owner-directory">
-          <div class="panel-head"><div><div class="staff-kicker">ACCESS CONTROL</div><h3>Team accounts</h3><p>Owner and staff accounts come from Supabase Auth.</p></div></div>
-          <div id="team-list">${staff.map(t => `<div class="team-account"><div class="team-person"><span class="team-avatar">${esc(initials(t.full_name || t.email))}</span><div><strong>${esc(t.full_name || 'Unnamed account')}</strong><small>${esc(t.email || '')}</small></div></div><select class="login-input team-role" data-id="${t.id}" aria-label="Role for ${esc(t.email || 'account')}" ${t.id === live.profile.id ? 'disabled' : ''}><option value="owner" ${t.role === 'owner' ? 'selected' : ''}>Owner</option><option value="staff" ${t.role === 'staff' ? 'selected' : ''}>Staff</option><option value="member" ${t.role === 'member' ? 'selected' : ''}>Member</option></select><span class="status-tag ${t.is_active ? '' : 'status-deactivated'}">${t.is_active ? 'Active' : 'Deactivated'}</span>${t.id === live.profile.id || t.role === 'owner' ? '<span></span>' : `<div class="team-actions"><button class="outline team-perms" data-id="${t.id}">Permissions</button><button class="outline team-reset" data-id="${t.id}">Reset password</button><button class="outline team-toggle" data-id="${t.id}" data-active="${t.is_active}">${t.is_active ? 'Deactivate' : 'Activate'}</button><button class="outline team-delete" data-id="${t.id}">Delete</button></div>`}</div>`).join('') || '<p class="sub">No accounts yet.</p>'}</div>
-          <div class="settings-notice" style="margin-top:14px">✳ &nbsp; Accounts are created in Supabase (Authentication → Users). Set the role here; staff see the staff portal and members use the member portal.</div>
+          <div class="panel-head"><div><div class="staff-kicker">ACCESS CONTROL</div><h3>Team accounts</h3><p>Click View on any account to update their name, role, permissions, or access.</p></div></div>
+          <div id="team-list">${staff.map(t => `<div class="team-account" data-id="${t.id}">
+            <div class="team-person">
+              <span class="team-avatar">${esc(initials(t.full_name || t.email))}</span>
+              <div>
+                <strong>${esc(t.full_name || 'Unnamed account')}${t.id === live.profile.id ? '<span class="team-you">You</span>' : ''}</strong>
+                <small>${esc(t.email || '')}</small>
+              </div>
+            </div>
+            <div class="team-row-meta">
+              <span class="team-role-pill ${t.role === 'owner' ? 'is-owner' : ''}">${t.role === 'owner' ? 'Owner' : 'Staff'}</span>
+              <span class="status-tag ${t.is_active ? '' : 'status-deactivated'}">${t.is_active ? 'Active' : 'Deactivated'}</span>
+              <button type="button" class="outline team-view" data-id="${t.id}">View ↗</button>
+            </div>
+          </div>`).join('') || '<p class="sub">No accounts yet.</p>'}</div>
+          <div class="settings-notice" style="margin-top:14px">✳ &nbsp; Use <b>+ Add staff ↗</b> to create a new staff or co-owner login. Member logins are managed from the <b>Members</b> tab.</div>
         </section>
 
         <div class="rp-side-stack">
@@ -2008,10 +2501,13 @@
             <div class="panel-head"><div><div class="staff-kicker">ROLES AT A GLANCE</div><h3>Who can do what</h3><p>Permissions are enforced by the database, not just hidden on screen.</p></div></div>
             <div class="team-role"><span class="team-role-icon">♙</span><div><strong>Owner</strong><small>Everything — pricing, staff, voids, finance and settings.</small></div></div>
             <div class="team-role"><span class="team-role-icon">✳</span><div><strong>Staff</strong><small>Payments, check-ins, walk-ins and selling, per permission.</small></div></div>
-            <div class="team-role"><span class="team-role-icon">◷</span><div><strong>Member</strong><small>Own pass, payment history and feedback only.</small></div></div>
           </section>
         </div>
       </div>`;
+    ownerContent.querySelector('#open-add-staff')?.addEventListener('click', openAddStaffModal);
+    ownerContent.querySelectorAll('.team-view').forEach(btn => {
+      btn.onclick = () => openTeamAccountModal(btn.dataset.id);
+    });
     ownerContent.querySelector('#team-view-activity')?.addEventListener('click', () => {
       const btn = [...ownerNav.querySelectorAll('button')].find(b => b.textContent.trim() === 'Activity');
       btn?.click();
@@ -2033,52 +2529,6 @@
         });
       } catch (error) { box.innerHTML = ''; }
     })();
-    ownerContent.querySelectorAll('.team-perms').forEach(button => button.onclick = () => permissionsDialog(button.dataset.id));
-    ownerContent.querySelectorAll('.team-reset').forEach(button => button.onclick = () => {
-      const account = live.team.find(t => t.id === button.dataset.id);
-      if (account) resetTeamPassword(account);
-    });
-    ownerContent.querySelectorAll('.team-toggle').forEach(button => button.onclick = async () => {
-      try {
-        await ui.call('set_team_active', { p_user: button.dataset.id, p_active: button.dataset.active !== 'true' });
-        await refreshData(true);
-        renderOwnerTeam();
-      } catch (error) { toastLive(friendly(error)); }
-    });
-    ownerContent.querySelectorAll('.team-delete').forEach(button => button.onclick = async () => {
-      const account = live.team.find(t => t.id === button.dataset.id);
-      if (!account) return;
-      const label = account.full_name || account.email || 'this staff member';
-      const ok = await confirmDialog({
-        title: `Delete ${label}?`,
-        body: `This permanently deletes <b>${esc(label)}</b>${account.email ? ` (${esc(account.email)})` : ''}'s staff account and signs them out immediately. Past payments, check-ins, and activity logs they recorded are preserved.<br><br>Use <b>Deactivate</b> if you only want to block sign-in temporarily.`,
-        confirm: 'Delete staff'
-      });
-      if (!ok) return;
-      button.disabled = true;
-      const prev = button.textContent;
-      button.textContent = 'Deleting…';
-      try {
-        const res = await sb.functions.invoke('delete-staff', { body: { user_id: account.id } });
-        if (res.error) throw res.error;
-        if (res.data?.error) throw new Error(res.data.detail || res.data.error);
-        toastLive(`${label} deleted.`);
-        await refreshData(true);
-        renderOwnerTeam();
-      } catch (error) {
-        toastLive(friendly(error));
-        button.disabled = false;
-        button.textContent = prev;
-      }
-    });
-    ownerContent.querySelectorAll('.team-role').forEach(select => select.onchange = async () => {
-      try {
-        await ui.call('set_team_role', { p_user: select.dataset.id, p_role: select.value });
-        toastLive('Role updated.');
-        await refreshData(true);
-        renderOwnerTeam();
-      } catch (error) { toastLive(friendly(error)); renderOwnerTeam(); }
-    });
   }
 
   // Void (reverse) a payment, walk-in or product sale. Nothing is deleted: the
@@ -2126,54 +2576,18 @@
     const walkin = live.walkins.filter(w => live$(w) && inRange(w.visited_on)).reduce((n, w) => n + Number(w.amount), 0);
     const product = live.sales.filter(s => live$(s) && inRange(s.sold_on)).reduce((n, s) => n + Number(s.total), 0);
     const reversed = [
-      ...live.payments.filter(p => p.voided_at && inRange(p.paid_on)).map(p => ({ ref: p.receipt_no, kind: 'Membership', amount: Number(p.amount), reason: p.void_reason })),
-      ...live.walkins.filter(w => w.voided_at && inRange(w.visited_on)).map(w => ({ ref: w.receipt_no, kind: 'Walk-in', amount: Number(w.amount), reason: w.void_reason })),
-      ...live.sales.filter(s => s.voided_at && inRange(s.sold_on)).map(s => ({ ref: s.receipt_no, kind: 'Product', amount: Number(s.total), reason: s.void_reason }))
+      ...live.payments.filter(p => p.voided_at && inRange(p.paid_on)).map(p => ({ ref: p.receipt_no, amount: Number(p.amount) })),
+      ...live.walkins.filter(w => w.voided_at && inRange(w.visited_on)).map(w => ({ ref: w.receipt_no, amount: Number(w.amount) })),
+      ...live.sales.filter(s => s.voided_at && inRange(s.sold_on)).map(s => ({ ref: s.receipt_no, amount: Number(s.total) }))
     ];
     const reversedTotal = reversed.reduce((n, r) => n + r.amount, 0);
     const total = membership + walkin + product;
-    const members = live.members;
+
     const transactions = [
       ...live.payments.filter(p => inRange(p.paid_on)).map(p => ({ id: p.id, kind: 'payment', name: p.member_name || (live.members.find(m => m.id === p.member_id) || {}).full_name || 'Member', type: p.receipt_no, category: 'Membership', date: p.paid_on, method: p.method, amount: Number(p.amount), status: p.status, voided: !!p.voided_at, reason: p.void_reason })),
-      ...live.walkins.filter(w => inRange(w.visited_on)).map(w => ({ id: w.id, kind: 'walkin', name: w.visitor_name, type: w.receipt_no, category: 'Walk-in', date: w.visited_on, method: w.method, amount: Number(w.amount), status: w.voided_at ? 'voided' : 'approved', voided: !!w.voided_at, reason: w.void_reason })),
+      ...live.walkins.filter(w => inRange(w.visited_on)).map(w => ({ id: w.id, kind: 'walkin', name: w.visitor_name || 'Walk-in guest', type: w.receipt_no, category: 'Walk-in', date: w.visited_on, method: w.method, amount: Number(w.amount), status: w.voided_at ? 'voided' : 'approved', voided: !!w.voided_at, reason: w.void_reason })),
       ...live.sales.filter(s => inRange(s.sold_on)).map(s => ({ id: s.id, kind: 'sale', name: s.customer_name || 'Walk-in customer', type: s.receipt_no, category: 'Product', date: s.sold_on, method: s.method, amount: Number(s.total), status: s.voided_at ? 'voided' : 'approved', voided: !!s.voided_at, reason: s.void_reason }))
     ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-
-    // ---- figures for the new layout ----
-    const activeMembers = members.filter(m => m.effective_status === 'Active').length;
-    const newMembers = members.filter(m => inRange(m.joined_on)).length;
-    const checkins = live.visits.filter(v => inRange(v.visit_date)).length;
-    const days = Math.max(1, Math.round((new Date(range.to + 'T00:00:00Z') - new Date(range.from + 'T00:00:00Z')) / 86400000) + 1);
-    const avgDaily = (checkins / days).toFixed(1);
-    const salesCount = live.sales.filter(s => inRange(s.sold_on) && live$(s)).length;
-
-    // daily revenue series across the period, for the column chart
-    const dayKey = d => String(d).slice(0, 10);
-    const series = [];
-    const cursor = new Date(range.from + 'T00:00:00Z');
-    const last = new Date(range.to + 'T00:00:00Z');
-    while (cursor <= last) {
-      const key = cursor.toISOString().slice(0, 10);
-      series.push({ day: key, total: 0 });
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-    const byDay = new Map(series.map(row => [row.day, row]));
-    payments.forEach(p => { const row = byDay.get(dayKey(p.paid_on)); if (row) row.total += Number(p.amount); });
-    live.walkins.filter(w => live$(w) && inRange(w.visited_on)).forEach(w => { const row = byDay.get(dayKey(w.visited_on)); if (row) row.total += Number(w.amount); });
-    live.sales.filter(x => live$(x) && inRange(x.sold_on)).forEach(x => { const row = byDay.get(dayKey(x.sold_on)); if (row) row.total += Number(x.total); });
-    const peak = Math.max(1, ...series.map(r => r.total));
-    // split each bar into membership / walk-in / product so the chart shows mix, not just height
-    const stacks = series.map(row => {
-      const m = payments.filter(p => dayKey(p.paid_on) === row.day).reduce((n, p) => n + Number(p.amount), 0);
-      const w = live.walkins.filter(x => live$(x) && dayKey(x.visited_on) === row.day).reduce((n, x) => n + Number(x.amount), 0);
-      const pr = live.sales.filter(x => live$(x) && dayKey(x.sold_on) === row.day).reduce((n, x) => n + Number(x.total), 0);
-      return { day: row.day, m, w, pr, total: m + w + pr };
-    });
-    const busiest = stacks.reduce((best, row) => (row.total > best.total ? row : best), stacks[0] || { day: range.from, total: 0 });
-    const fmtShort = d => {
-      const [y, mo, da] = String(d).slice(0, 10).split('-').map(Number);
-      return new Date(Date.UTC(y, mo - 1, da)).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-    };
 
     const methodTotals = {};
     [...payments.map(p => ({ m: p.method, a: Number(p.amount) })),
@@ -2181,90 +2595,616 @@
      ...live.sales.filter(x => live$(x) && inRange(x.sold_on)).map(x => ({ m: x.method, a: Number(x.total) }))]
       .forEach(r => { methodTotals[r.m || 'Other'] = (methodTotals[r.m || 'Other'] || 0) + r.a; });
     const methodRows = Object.entries(methodTotals).sort((a, b) => b[1] - a[1]);
-    const methodMax = Math.max(1, ...methodRows.map(r => r[1]));
 
-    const topMembers = members
-      .filter(m => inRange(m.joined_on))
-      .slice(0, 5);
+    if (!live.reportsUi) live.reportsUi = { q: '', type: 'all', page: 1 };
 
     ownerContent.innerHTML = `
       <div class="rp-head">
         <div>
-          <div class="eyebrow" style="color:#8ba284">THE BIGGER PICTURE</div>
+          <div class="eyebrow" style="color:#8ba284">TRANSACTIONS &amp; RECONCILIATION</div>
           <h2>Gym reports</h2>
-          <p>Built from live payments, visits and memberships · ${periodText(true)}</p>
+          <p>Every recorded receipt and payment method split · ${periodText(true)}</p>
+        </div>
+        <button type="button" class="login-submit" id="report-export" style="width:auto;padding:0 18px;height:42px">Export CSV ↓</button>
+      </div>
+
+      <div class="reports-summary">
+        <div class="reports-total-card">
+          <div>
+            <div class="staff-kicker">NET COLLECTED · ${periodText().toUpperCase()}</div>
+            <div class="reports-total-val">${peso(total)}</div>
+            <div class="reports-total-sub">${transactions.length} receipt${transactions.length === 1 ? '' : 's'}${reversed.length ? ` · −${peso(reversedTotal)} voided (${reversed.length})` : ''}</div>
+          </div>
+          <div class="reports-splits">
+            <div><small>MEMBERSHIPS</small><strong>${peso(membership)}</strong></div>
+            <div><small>WALK-INS</small><strong>${peso(walkin)}</strong></div>
+            <div><small>PRODUCTS</small><strong>${peso(product)}</strong></div>
+          </div>
+        </div>
+
+        <section class="card reports-mix-card">
+          <div class="panel-head"><div><div class="staff-kicker">RECONCILIATION</div><h3>Payment mix</h3></div></div>
+          ${methodRows.length ? `<div class="reports-mix-pills">${methodRows.map(([name, amount]) => `
+            <div class="reports-mix-row"><span>${esc(name)}</span><strong>${peso(amount)}</strong></div>`).join('')}</div>`
+            : '<p class="sub" style="margin:0">No payments recorded in this period yet.</p>'}
+        </section>
+      </div>
+
+      <section class="card page-panel rp-table-card">
+        <div class="panel-head"><div><div class="staff-kicker">THE LEDGER</div><h3>Transactions</h3><p>Search, filter, void mistakes, or export receipts for ${periodText(true)}.</p></div></div>
+        <div class="reports-toolbar">
+          <input class="login-input" id="rp-tx-search" placeholder="Search person or receipt number…" value="${esc(live.reportsUi.q)}">
+          <select class="login-input" id="rp-tx-type" aria-label="Filter transactions by type">
+            <option value="all" ${live.reportsUi.type === 'all' ? 'selected' : ''}>All types</option>
+            <option value="Membership" ${live.reportsUi.type === 'Membership' ? 'selected' : ''}>Memberships</option>
+            <option value="Walk-in" ${live.reportsUi.type === 'Walk-in' ? 'selected' : ''}>Walk-ins</option>
+            <option value="Product" ${live.reportsUi.type === 'Product' ? 'selected' : ''}>Products</option>
+            <option value="voided" ${live.reportsUi.type === 'voided' ? 'selected' : ''}>Voided only</option>
+          </select>
+        </div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>PERSON / REFERENCE</th><th>TYPE</th><th>DATE</th><th>METHOD</th><th>STATUS</th><th>AMOUNT</th><th></th></tr></thead>
+            <tbody id="rp-tx-body"></tbody>
+          </table>
+        </div>
+        <div id="rp-tx-pager"></div>
+      </section>`;
+
+    const searchInput = ownerContent.querySelector('#rp-tx-search');
+    const typeSelect = ownerContent.querySelector('#rp-tx-type');
+    const tbody = ownerContent.querySelector('#rp-tx-body');
+    const pagerEl = ownerContent.querySelector('#rp-tx-pager');
+
+    const getFiltered = () => {
+      const q = (live.reportsUi.q || '').trim().toLowerCase();
+      const t = live.reportsUi.type || 'all';
+      return transactions.filter(row => {
+        if (t === 'voided' && !row.voided) return false;
+        if (t !== 'all' && t !== 'voided' && row.category !== t) return false;
+        if (!q) return true;
+        return (row.name || '').toLowerCase().includes(q)
+          || (row.type || '').toLowerCase().includes(q)
+          || (row.method || '').toLowerCase().includes(q);
+      });
+    };
+
+    const drawLedger = () => {
+      const filtered = getFiltered();
+      const perPage = 12;
+      const pages = Math.max(1, Math.ceil(filtered.length / perPage));
+      live.reportsUi.page = Math.min(Math.max(1, live.reportsUi.page), pages);
+      const start = (live.reportsUi.page - 1) * perPage;
+      const slice = filtered.slice(start, start + perPage);
+
+      tbody.innerHTML = slice.length ? slice.map(t => `<tr class="${t.voided ? 'row-is-voided' : ''}">
+        <td><strong>${esc(t.name)}</strong><small>${esc(t.type)}</small></td>
+        <td><span class="report-type ${t.category === 'Walk-in' ? 'walk' : ''}">${t.category}</span></td>
+        <td>${esc(fmtDay(t.date))}</td>
+        <td>${esc(t.method)}</td>
+        <td><span class="status-tag${t.voided ? ' status-deactivated' : ''}">${esc(t.status)}</span>${t.voided && t.reason ? `<small class="void-reason">${esc(t.reason)}</small>` : ''}</td>
+        <td class="report-amount${t.voided ? ' voided-amount' : ''}">${peso(t.amount)}</td>
+        <td>${!t.voided && t.status !== 'pending' ? `<button class="outline row-void" data-id="${t.id}" data-kind="${t.kind}" data-ref="${esc(t.type)}">Void</button>` : ''}</td>
+      </tr>`).join('') : '<tr><td colspan="7" class="report-empty">No matching transactions in this period.</td></tr>';
+
+      tbody.querySelectorAll('.row-void').forEach(button => {
+        button.onclick = () => voidTransaction(button.dataset.kind, button.dataset.id, button.dataset.ref);
+      });
+
+      if (pages <= 1) {
+        pagerEl.innerHTML = filtered.length ? `<div class="owner-pager" style="margin-top:12px"><span>Showing ${filtered.length} receipt${filtered.length === 1 ? '' : 's'}</span></div>` : '';
+      } else {
+        const nums = Array.from({ length: pages }, (_, i) => i + 1)
+          .filter(n => n === 1 || n === pages || Math.abs(n - live.reportsUi.page) <= 1);
+        const pills = nums.map((n, idx) => {
+          const gap = idx > 0 && n - nums[idx - 1] > 1 ? '<span class="owner-pager-dots">…</span>' : '';
+          return `${gap}<button type="button" class="owner-page-num ${n === live.reportsUi.page ? 'is-active' : ''}" data-rp-page="${n}">${n}</button>`;
+        }).join('');
+        pagerEl.innerHTML = `<div class="owner-pager" style="margin-top:12px">
+          <span>Showing ${start + 1}–${Math.min(start + slice.length, filtered.length)} of ${filtered.length}</span>
+          <div class="owner-pager-btns">
+            <button type="button" class="outline" id="rp-prev" ${live.reportsUi.page <= 1 ? 'disabled' : ''}>‹ Prev</button>
+            ${pills}
+            <button type="button" class="outline" id="rp-next" ${live.reportsUi.page >= pages ? 'disabled' : ''}>Next ›</button>
+          </div>
+        </div>`;
+        pagerEl.querySelector('#rp-prev')?.addEventListener('click', () => { live.reportsUi.page -= 1; drawLedger(); });
+        pagerEl.querySelector('#rp-next')?.addEventListener('click', () => { live.reportsUi.page += 1; drawLedger(); });
+        pagerEl.querySelectorAll('[data-rp-page]').forEach(btn => btn.addEventListener('click', () => {
+          live.reportsUi.page = Number(btn.dataset.rpPage);
+          drawLedger();
+        }));
+      }
+    };
+
+    searchInput.addEventListener('input', () => {
+      live.reportsUi.q = searchInput.value;
+      live.reportsUi.page = 1;
+      drawLedger();
+    });
+    typeSelect.addEventListener('change', () => {
+      live.reportsUi.type = typeSelect.value;
+      live.reportsUi.page = 1;
+      drawLedger();
+    });
+    ownerContent.querySelector('#report-export').onclick = () => {
+      const rows = getFiltered();
+      downloadCsv('gimmda-transactions.csv', [
+        ['Name', 'Reference', 'Type', 'Date', 'Method', 'Status', 'Amount'],
+        ...rows.map(t => [t.name, t.type, t.category, t.date, t.method, t.status, t.amount])
+      ]);
+    };
+
+    drawLedger();
+  }
+
+  const analyticsCache = new Map();
+  const dayDetailCache = new Map();
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  function renderOwnerAnalytics() {
+    const today = phToday();
+    const [curY, curM] = today.split('-').map(Number);
+    if (!live.cal) {
+      live.cal = {
+        mode: 'month',
+        year: curY,
+        month: curM - 1,
+        selectedDate: today,
+        customFrom: today.slice(0, 8) + '01',
+        customTo: today
+      };
+    }
+    const cal = live.cal;
+
+    const getRange = () => {
+      if (cal.mode === 'year') {
+        return { from: `${cal.year}-01-01`, to: `${cal.year}-12-31`, label: `Full year ${cal.year}` };
+      }
+      if (cal.mode === 'custom') {
+        const from = cal.customFrom || today.slice(0, 8) + '01';
+        const to = (cal.customTo && cal.customTo >= from) ? cal.customTo : from;
+        return { from, to, label: `${fmtDay(from)} – ${fmtDay(to)}` };
+      }
+      const start = new Date(Date.UTC(cal.year, cal.month, 1)).toISOString().slice(0, 10);
+      const end = new Date(Date.UTC(cal.year, cal.month + 1, 0)).toISOString().slice(0, 10);
+      return { from: start, to: end, label: `${MONTH_NAMES[cal.month]} ${cal.year}` };
+    };
+
+    const range = getRange();
+    if (!cal.selectedDate || cal.selectedDate < range.from || cal.selectedDate > range.to) {
+      cal.selectedDate = (today >= range.from && today <= range.to) ? today : range.from;
+    }
+
+    const baseYears = [];
+    for (let y = curY; y >= Math.max(2020, curY - 6); y -= 1) baseYears.push(y);
+
+    ownerContent.innerHTML = `
+      <div class="rp-head">
+        <div>
+          <div class="eyebrow" style="color:#8ba284">CALENDAR ANALYTICS</div>
+          <h2>Historical calendar &amp; trends</h2>
+          <p>Backtrack any day, month, or year across revenue, check-ins, and growth · ${esc(range.label)}</p>
         </div>
       </div>
 
-      <div class="rp-top">
-        ${bentoHero({
-          label: `TOTAL REVENUE · ${periodText().toUpperCase()}`,
-          valueHtml: `<strong>${peso(total)}</strong>`,
-          sub: `${transactions.length} transaction${transactions.length === 1 ? '' : 's'} across memberships, walk-ins and products`,
-          sparkLabel: 'DAILY PULSE',
-          sparkPeak: busiest.total ? `Peak ${peso(busiest.total)}` : 'No takings yet',
-          points: stacks.slice(-7).map(r => r.total),
-          split: [['MEMBERSHIPS', peso(membership)], ['WALK-INS', peso(walkin)], ['PRODUCTS', peso(product)]],
-          note: reversed.length ? `<div class="rp-hero-reversed">−${peso(reversedTotal)} reversed · ${reversed.length} voided, excluded from revenue</div>` : ''
-        })}
-
-        <div class="rp-kpis">
-          <article class="rp-kpi"><span class="rp-kpi-icon">◇</span><div><small>ACTIVE MEMBERS</small><strong>${activeMembers}</strong><em>${newMembers} joined this period</em></div></article>
-          <article class="rp-kpi"><span class="rp-kpi-icon">◷</span><div><small>CHECK-INS</small><strong>${checkins}</strong><em>${avgDaily} per day average</em></div></article>
-          <article class="rp-kpi"><span class="rp-kpi-icon">▤</span><div><small>PRODUCT SALES</small><strong>${salesCount}</strong><em>${peso(product)} collected</em></div></article>
-          <article class="rp-kpi"><span class="rp-kpi-icon">✳</span><div><small>BUSIEST DAY</small><strong style="font-size:17px">${busiest.total ? fmtShort(busiest.day) : '—'}</strong><em>${busiest.total ? peso(busiest.total) + ' collected' : 'No takings yet'}</em></div></article>
+      <div class="ca-toolbar">
+        <div class="ca-toolbar-top">
+          <div class="ca-modes" role="tablist" aria-label="Calendar view mode">
+            <button type="button" class="ca-mode ${cal.mode === 'month' ? 'active' : ''}" data-ca-mode="month">Month calendar</button>
+            <button type="button" class="ca-mode ${cal.mode === 'year' ? 'active' : ''}" data-ca-mode="year">Year overview</button>
+            <button type="button" class="ca-mode ${cal.mode === 'custom' ? 'active' : ''}" data-ca-mode="custom">Custom range</button>
+          </div>
+          <div class="ca-nav-controls" id="ca-controls"></div>
+        </div>
+        <div class="ca-quick-row">
+          <span class="ca-quick-label">Quick jump</span>
+          <button type="button" class="ca-chip" data-ca-quick="this_month">This month</button>
+          <button type="button" class="ca-chip" data-ca-quick="last_month">Last month</button>
+          <button type="button" class="ca-chip" data-ca-quick="three_months">3 months ago</button>
+          <button type="button" class="ca-chip" data-ca-quick="this_year">This year</button>
+          <button type="button" class="ca-chip" data-ca-quick="last_year">Last year</button>
         </div>
       </div>
 
-      <div class="rp-mid">
-        <section class="card rp-chart-card">
-          <div class="panel-head"><div><div class="staff-kicker">DAILY TAKINGS</div><h3>Revenue by day</h3><p>Each column is one day. Segments show where the money came from.</p></div>
-            <div class="rp-legend"><span><i class="rp-dot rp-dot-m"></i>Memberships</span><span><i class="rp-dot rp-dot-w"></i>Walk-ins</span><span><i class="rp-dot rp-dot-p"></i>Products</span></div>
+      <div id="ca-body"></div>`;
+
+    const controlsEl = ownerContent.querySelector('#ca-controls');
+    const bodyEl = ownerContent.querySelector('#ca-body');
+    const shiftMonth = delta => {
+      const dt = new Date(Date.UTC(curY, curM - 1 + delta, 1));
+      return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() };
+    };
+    const isQuick = id => {
+      const m1 = shiftMonth(-1), m3 = shiftMonth(-3);
+      if (id === 'this_month') return cal.mode === 'month' && cal.year === curY && cal.month === curM - 1;
+      if (id === 'last_month') return cal.mode === 'month' && cal.year === m1.y && cal.month === m1.m;
+      if (id === 'three_months') return cal.mode === 'month' && cal.year === m3.y && cal.month === m3.m;
+      if (id === 'this_year') return cal.mode === 'year' && cal.year === curY;
+      if (id === 'last_year') return cal.mode === 'year' && cal.year === curY - 1;
+      return false;
+    };
+    ownerContent.querySelectorAll('[data-ca-quick]').forEach(chip => {
+      chip.classList.toggle('active', isQuick(chip.dataset.caQuick));
+      chip.onclick = () => {
+        const q = chip.dataset.caQuick;
+        if (q === 'this_month') { cal.mode = 'month'; cal.year = curY; cal.month = curM - 1; cal.selectedDate = today; }
+        else if (q === 'last_month') { const d = shiftMonth(-1); cal.mode = 'month'; cal.year = d.y; cal.month = d.m; }
+        else if (q === 'three_months') { const d = shiftMonth(-3); cal.mode = 'month'; cal.year = d.y; cal.month = d.m; }
+        else if (q === 'this_year') { cal.mode = 'year'; cal.year = curY; }
+        else if (q === 'last_year') { cal.mode = 'year'; cal.year = curY - 1; }
+        renderOwnerAnalytics();
+      };
+    });
+
+    const paintControls = (yearsList = baseYears) => {
+      const years = [...new Set([...yearsList, ...baseYears, cal.year])].sort((a, b) => b - a);
+      if (cal.mode === 'custom') {
+        controlsEl.innerHTML = `
+          <input type="date" class="ca-date-input" id="ca-from" value="${esc(cal.customFrom)}" max="${today}" aria-label="From date">
+          <span style="color:#7f8e82;font-weight:600">to</span>
+          <input type="date" class="ca-date-input" id="ca-to" value="${esc(cal.customTo)}" max="${today}" aria-label="To date">
+          <button type="button" class="outline" id="ca-apply-custom">Apply</button>
+          <button type="button" class="outline" id="ca-export">Export CSV ↓</button>`;
+        controlsEl.querySelector('#ca-apply-custom').onclick = () => {
+          const from = controlsEl.querySelector('#ca-from').value;
+          const to = controlsEl.querySelector('#ca-to').value;
+          if (!from || !to || to < from) return toastLive('End date must be on or after the start date.');
+          cal.customFrom = from;
+          cal.customTo = to;
+          cal.selectedDate = from;
+          renderOwnerAnalytics();
+        };
+      } else {
+        controlsEl.innerHTML = `
+          <button type="button" class="ca-step" id="ca-prev" title="${cal.mode === 'year' ? 'Previous year' : 'Previous month'}" aria-label="Previous">‹</button>
+          ${cal.mode === 'month' ? `<select class="ca-select" id="ca-month" aria-label="Select month">${MONTH_NAMES.map((m, idx) => `<option value="${idx}" ${idx === cal.month ? 'selected' : ''}>${m}</option>`).join('')}</select>` : ''}
+          <select class="ca-select" id="ca-year" aria-label="Select year">${years.map(y => `<option value="${y}" ${y === cal.year ? 'selected' : ''}>${y}</option>`).join('')}</select>
+          <button type="button" class="ca-step" id="ca-next" title="${cal.mode === 'year' ? 'Next year' : 'Next month'}" aria-label="Next">›</button>
+          <button type="button" class="outline" id="ca-today">Today</button>
+          <button type="button" class="outline" id="ca-export">Export CSV ↓</button>`;
+        controlsEl.querySelector('#ca-prev').onclick = () => {
+          if (cal.mode === 'year') { cal.year -= 1; }
+          else {
+            cal.month -= 1;
+            if (cal.month < 0) { cal.month = 11; cal.year -= 1; }
+          }
+          renderOwnerAnalytics();
+        };
+        controlsEl.querySelector('#ca-next').onclick = () => {
+          if (cal.mode === 'year') { cal.year += 1; }
+          else {
+            cal.month += 1;
+            if (cal.month > 11) { cal.month = 0; cal.year += 1; }
+          }
+          renderOwnerAnalytics();
+        };
+        const mSel = controlsEl.querySelector('#ca-month');
+        if (mSel) mSel.onchange = () => { cal.month = Number(mSel.value); renderOwnerAnalytics(); };
+        const ySel = controlsEl.querySelector('#ca-year');
+        if (ySel) ySel.onchange = () => { cal.year = Number(ySel.value); renderOwnerAnalytics(); };
+        controlsEl.querySelector('#ca-today').onclick = () => {
+          cal.year = curY;
+          cal.month = curM - 1;
+          cal.selectedDate = today;
+          renderOwnerAnalytics();
+        };
+      }
+      const expBtn = controlsEl.querySelector('#ca-export');
+      if (expBtn) expBtn.onclick = () => {
+        const snap = analyticsCache.get(`${range.from}:${range.to}`);
+        const rows = (snap?.days || []).map(d => [d.date, d.membership, d.walkin, d.product, d.revenue, d.expenses, d.net_profit, d.checkins, d.new_members]);
+        downloadCsv(`gimmda-analytics-${range.from}-to-${range.to}.csv`, [['Date', 'Membership', 'Walk-in', 'Products', 'Total Revenue', 'Expenses', 'Net Profit', 'Check-ins', 'New Members'], ...rows]);
+      };
+    };
+
+    ownerContent.querySelectorAll('[data-ca-mode]').forEach(btn => {
+      btn.onclick = () => {
+        cal.mode = btn.dataset.caMode;
+        renderOwnerAnalytics();
+      };
+    });
+
+    const deltaBadge = (cur, prev) => {
+      const c = Number(cur || 0);
+      const p = Number(prev || 0);
+      if (p === 0 && c === 0) return '<span class="ca-delta flat">0% vs prior</span>';
+      if (p === 0 && c > 0) return '<span class="ca-delta up">New vs prior</span>';
+      const pct = Math.round(((c - p) / p) * 100);
+      const cls = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+      const sign = pct > 0 ? '+' : '';
+      return `<span class="ca-delta ${cls}">${sign}${pct}% vs prior</span>`;
+    };
+
+    const paintAnalytics = data => {
+      if (!bodyEl.isConnected) return;
+      paintControls(data.available_years || baseYears);
+      const t = data.totals || {};
+      const prev = data.previous || {};
+      const days = data.days || [];
+      const dayMap = new Map(days.map(d => [String(d.date).slice(0, 10), d]));
+      const monthsMap = new Map((data.months || []).map(m => [m.month, m]));
+      const peakRev = Math.max(1, ...days.map(d => Number(d.revenue || 0)));
+
+      let centerMarkup = '';
+      const compactPeso = n => {
+        const v = Number(n || 0);
+        if (v >= 1000000) return `₱${(v / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+        if (v >= 1000) return `₱${(v / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+        return `₱${Math.round(v)}`;
+      };
+      if (cal.mode === 'year') {
+        const maxMonthRev = Math.max(1, ...MONTH_SHORT.map((_, idx) => Number((monthsMap.get(`${cal.year}-${String(idx + 1).padStart(2, '0')}`) || {}).revenue || 0)));
+        const peakMonthIdx = MONTH_SHORT.reduce((best, _, idx) => {
+          const r = Number((monthsMap.get(`${cal.year}-${String(idx + 1).padStart(2, '0')}`) || {}).revenue || 0);
+          const br = Number((monthsMap.get(`${cal.year}-${String(best + 1).padStart(2, '0')}`) || {}).revenue || 0);
+          return r > br ? idx : best;
+        }, 0);
+        const peakMonthVal = Number((monthsMap.get(`${cal.year}-${String(peakMonthIdx + 1).padStart(2, '0')}`) || {}).revenue || 0);
+        const monthTiles = MONTH_SHORT.map((name, idx) => {
+          const ym = `${cal.year}-${String(idx + 1).padStart(2, '0')}`;
+          const row = monthsMap.get(ym) || { revenue: 0, expenses: 0, net_profit: 0, checkins: 0, new_members: 0 };
+          const hasRev = Number(row.revenue) > 0 || Number(row.checkins) > 0;
+          const isPeak = peakMonthVal > 0 && idx === peakMonthIdx;
+          const barPct = Number(row.revenue) > 0 ? Math.max(8, Math.round((Number(row.revenue) / maxMonthRev) * 100)) : 0;
+          return `<button type="button" class="ca-month-tile ${hasRev ? 'has-rev' : ''} ${isPeak ? 'is-peak' : ''}" data-jump-month="${idx}">
+            <div>
+              <div class="ca-month-head"><strong>${name} ${cal.year}</strong>${isPeak ? '<span class="ca-peak-pill">★ Peak</span>' : `<span>${row.checkins || 0} visits</span>`}</div>
+              <div class="ca-month-rev">${peso(row.revenue || 0)}</div>
+            </div>
+            <div>
+              <div class="ca-month-bar"><i style="width:${barPct}%"></i></div>
+              <div class="ca-month-meta"><span>Net ${peso(row.net_profit || 0)}</span><span>+${row.new_members || 0} members</span></div>
+            </div>
+          </button>`;
+        }).join('');
+        centerMarkup = `
+          <div class="ca-year-grid">${monthTiles}</div>
+          <section class="card rp-chart-card" style="margin-bottom:16px">
+            <div class="panel-head"><div><div class="staff-kicker">ANNUAL TRAJECTORY</div><h3>${cal.year} month-by-month revenue</h3><p>Click any month card or column to open its day-by-day calendar.</p></div>
+              <div class="rp-legend"><span><i class="rp-dot rp-dot-m"></i>Memberships</span><span><i class="rp-dot rp-dot-w"></i>Walk-ins</span><span><i class="rp-dot rp-dot-p"></i>Products</span></div>
+            </div>
+            <div class="rp-chart">
+              ${MONTH_SHORT.map((name, idx) => {
+                const row = monthsMap.get(`${cal.year}-${String(idx + 1).padStart(2, '0')}`) || { membership: 0, walkin: 0, product: 0, revenue: 0 };
+                const h = v => (Number(v || 0) / maxMonthRev) * 100;
+                const hasAny = Number(row.revenue) > 0;
+                return `<div class="rp-bar-wrap is-clickable" data-jump-month="${idx}" title="${name} ${cal.year} · ${peso(row.revenue)}"><div class="rp-bar">
+                  ${hasAny ? `${row.product ? `<i class="rp-seg rp-dot-p" style="height:${h(row.product)}%"></i>` : ''}${row.walkin ? `<i class="rp-seg rp-dot-w" style="height:${h(row.walkin)}%"></i>` : ''}${row.membership ? `<i class="rp-seg rp-dot-m" style="height:${h(row.membership)}%"></i>` : ''}` : '<i class="rp-seg rp-seg-empty" style="height:8%"></i>'}
+                </div><span>${name}</span></div>`;
+              }).join('')}
+            </div>
+          </section>`;
+      } else {
+        // Month grid (or custom range starting month calendar)
+        const refDate = cal.mode === 'custom' ? cal.customFrom : `${cal.year}-${String(cal.month + 1).padStart(2, '0')}-01`;
+        const [gy, gm] = refDate.split('-').map(Number);
+        const firstDow = new Date(Date.UTC(gy, gm - 1, 1)).getUTCDay();
+        const totalDays = new Date(Date.UTC(gy, gm, 0)).getUTCDate();
+        const cells = [];
+        for (let i = 0; i < firstDow; i += 1) cells.push('<div class="ca-cell is-empty" aria-hidden="true"></div>');
+        for (let d = 1; d <= totalDays; d += 1) {
+          const iso = `${gy}-${String(gm).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+          const info = dayMap.get(iso);
+          const rev = Number(info?.revenue || 0);
+          const visits = Number(info?.checkins || 0);
+          const lvl = rev <= 0 && visits <= 0 ? '' : rev >= peakRev * 0.65 ? 'lvl-3' : rev >= peakRev * 0.25 ? 'lvl-2' : 'lvl-1';
+          const cls = ['ca-cell', lvl, iso === today ? 'is-today' : '', iso === cal.selectedDate ? 'is-selected' : ''].filter(Boolean).join(' ');
+          cells.push(`<button type="button" class="${cls}" data-ca-date="${iso}">
+            <div class="ca-cell-top"><span class="ca-cell-num">${d}</span>${visits ? `<span class="ca-cell-visits" title="${visits} check-ins">${visits}</span>` : ''}</div>
+            <div>${rev > 0 ? `<div class="ca-cell-rev"><span class="ca-cell-rev-full">${peso(rev).replace('.00', '')}</span><span class="ca-cell-rev-short">${compactPeso(rev)}</span></div>` : ''}
+            ${info?.new_members ? `<div class="ca-cell-sub">+${info.new_members} joined</div>` : ''}</div>
+          </button>`);
+        }
+        centerMarkup = `
+          <div class="ca-split">
+            <section class="ca-cal-card">
+              <div class="panel-head" style="margin-bottom:12px">
+                <div><div class="staff-kicker">DAY-BY-DAY CALENDAR</div><h3>${MONTH_NAMES[gm - 1]} ${gy}</h3><p>Click any date to inspect that day’s takings, check-ins, and sign-ups.</p></div>
+              </div>
+              <div class="ca-weekdays"><span>SUN</span><span>MON</span><span>TUE</span><span>WED</span><span>THU</span><span>FRI</span><span>SAT</span></div>
+              <div class="ca-cal-grid">${cells.join('')}</div>
+              <div class="ca-legend">
+                <span>${days.length} active day${days.length === 1 ? '' : 's'} in range</span>
+                <span class="ca-legend-scale">Less <i style="background:#fbfcfa"></i><i style="background:#f2f8ea"></i><i style="background:#e3f2d3"></i><i style="background:#c8e7aa"></i> More</span>
+              </div>
+            </section>
+            <section class="ca-day-card" id="ca-day-inspector">
+              <div id="ca-day-body"><p class="sub">Loading day breakdown…</p></div>
+            </section>
+          </div>`;
+      }
+
+      const hoursMap = new Map((data.peak_hours || []).map(h => [Number(h.hour), Number(h.count)]));
+      const hourSlots = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+      const maxHour = Math.max(1, ...hourSlots.map(h => hoursMap.get(h) || 0));
+      const methods = data.methods || [];
+      const maxMethod = Math.max(1, ...methods.map(m => Number(m.total || 0)));
+
+      bodyEl.innerHTML = `
+        <div class="rp-top">
+          ${bentoHero({
+            label: `REVENUE · ${range.label.toUpperCase()}`,
+            valueHtml: `<strong>${peso(t.revenue || 0)}</strong>${deltaBadge(t.revenue, prev.revenue)}`,
+            sub: `${t.payment_count || 0} membership · ${t.walkin_count || 0} walk-in · ${t.sale_count || 0} product sales`,
+            sparkLabel: 'DAILY PULSE',
+            sparkPeak: days.length ? `Peak ${peso(peakRev)}` : 'No activity in range',
+            points: days.slice(-10).map(d => Number(d.revenue || 0)),
+            split: [
+              ['MEMBERSHIPS', peso(t.membership || 0)],
+              ['WALK-INS', peso(t.walkin || 0)],
+              ['PRODUCTS', peso(t.product || 0)]
+            ]
+          })}
+          <div class="rp-kpis">
+            <article class="rp-kpi"><span class="rp-kpi-icon">₱</span><div><small>NET PROFIT</small><strong>${peso(t.net_profit || 0)}</strong><em>${peso(t.expenses || 0)} expenses</em></div></article>
+            <article class="rp-kpi"><span class="rp-kpi-icon">◷</span><div><small>CHECK-INS</small><strong>${t.checkins || 0}</strong><em>${t.unique_visitors || 0} unique members</em></div></article>
+            <article class="rp-kpi"><span class="rp-kpi-icon">♙</span><div><small>NEW MEMBERS</small><strong>${t.new_members || 0}</strong><em>joined in selected range</em></div></article>
+            <article class="rp-kpi"><span class="rp-kpi-icon">✳</span><div><small>ACTIVE DAYS</small><strong>${days.length}</strong><em>with takings or visits</em></div></article>
           </div>
-          <div class="rp-chart">
-            ${(stacks.some(r => r.total > 0) ? stacks.filter(r => r.total > 0).slice(-14) : stacks.slice(-10)).map((row, idx) => {
-              const h = v => (v / peak) * 100;
-              const tip = `${fmtShort(row.day)} · ${peso(row.total)}`;
-              const hasAny = row.pr || row.w || row.m;
-              return `<div class="rp-bar-wrap" title="${esc(tip)}"><div class="rp-bar">
-                ${hasAny ? `${row.pr ? `<i class="rp-seg rp-dot-p" style="height:${h(row.pr)}%"></i>` : ''}${row.w ? `<i class="rp-seg rp-dot-w" style="height:${h(row.w)}%"></i>` : ''}${row.m ? `<i class="rp-seg rp-dot-m" style="height:${h(row.m)}%"></i>` : ''}` : `<i class="rp-seg rp-seg-empty" style="height:${10 + ((idx * 7) % 14)}%"></i>`}
-              </div><span>${Number(String(row.day).slice(8))}</span></div>`;
-            }).join('')}
+        </div>
+
+        ${centerMarkup}
+
+        <div class="rp-mid">
+          <section class="card rp-chart-card">
+            <div class="panel-head"><div><div class="staff-kicker">TRAFFIC PATTERN</div><h3>Peak gym hours</h3><p>Check-in timing across ${esc(range.label)}.</p></div></div>
+            <div class="ca-hours" style="grid-template-columns:repeat(${hourSlots.length},minmax(0,1fr))">
+              ${hourSlots.map(h => {
+                const cnt = hoursMap.get(h) || 0;
+                const pct = cnt ? Math.max(12, Math.round((cnt / maxHour) * 100)) : 8;
+                const lbl = h === 12 ? '12p' : h > 12 ? `${h - 12}p` : `${h}a`;
+                return `<div class="ca-hour-col" title="${lbl}: ${cnt} check-in${cnt === 1 ? '' : 's'}"><div class="ca-hour-bar ${cnt ? '' : 'empty'}" style="height:${pct}%"></div><span>${lbl}</span></div>`;
+              }).join('')}
+            </div>
+          </section>
+
+          <section class="card rp-mix-card">
+            <div class="panel-head"><div><div class="staff-kicker">PAYMENT CHANNELS</div><h3>How members paid</h3><p>Breakdown for ${esc(range.label)}.</p></div></div>
+            ${methods.length ? methods.map(m => `
+              <div class="rp-method">
+                <div class="rp-method-head"><span>${esc(m.method)}</span><b>${peso(m.total)}</b></div>
+                <div class="rp-method-bar"><span style="width:${Math.round((Number(m.total) / maxMethod) * 100)}%"></span></div>
+              </div>`).join('') : '<p class="sub">No payments recorded in this period.</p>'}
+          </section>
+        </div>`;
+
+      bodyEl.querySelectorAll('[data-jump-month]').forEach(tile => {
+        tile.onclick = () => {
+          cal.month = Number(tile.dataset.jumpMonth);
+          cal.mode = 'month';
+          cal.selectedDate = `${cal.year}-${String(cal.month + 1).padStart(2, '0')}-01`;
+          renderOwnerAnalytics();
+        };
+      });
+
+      bodyEl.querySelectorAll('[data-ca-date]').forEach(cell => {
+        cell.onclick = () => {
+          cal.selectedDate = cell.dataset.caDate;
+          bodyEl.querySelectorAll('[data-ca-date]').forEach(c => c.classList.toggle('is-selected', c.dataset.caDate === cal.selectedDate));
+          loadDayInspector(cal.selectedDate);
+        };
+      });
+
+      if (cal.mode !== 'year') loadDayInspector(cal.selectedDate);
+    };
+
+    const loadDayInspector = async dateStr => {
+      const slot = bodyEl.querySelector('#ca-day-body');
+      if (!slot || !slot.isConnected) return;
+      const stepDay = delta => {
+        const [yy, mm, dd] = dateStr.split('-').map(Number);
+        const dt = new Date(Date.UTC(yy, mm - 1, dd + delta));
+        const nextIso = dt.toISOString().slice(0, 10);
+        const ny = dt.getUTCFullYear();
+        const nm = dt.getUTCMonth();
+        cal.selectedDate = nextIso;
+        if (cal.mode === 'month' && (ny !== cal.year || nm !== cal.month)) {
+          cal.year = ny;
+          cal.month = nm;
+          renderOwnerAnalytics();
+          return;
+        }
+        bodyEl.querySelectorAll('[data-ca-date]').forEach(c => c.classList.toggle('is-selected', c.dataset.caDate === cal.selectedDate));
+        loadDayInspector(nextIso);
+      };
+
+      const paintDay = detail => {
+        if (!slot.isConnected) return;
+        const s = detail.summary || {};
+        const payments = detail.payments || [];
+        const walkins = detail.walkins || [];
+        const sales = detail.sales || [];
+        const visits = detail.visits || [];
+        const expenses = detail.expenses || [];
+        const newMembers = detail.new_members || [];
+        const anyActivity = payments.length || walkins.length || sales.length || visits.length || expenses.length || newMembers.length;
+        const revTotal = Number(s.revenue || 0);
+        const mPct = revTotal > 0 ? Math.round((Number(s.membership || 0) / revTotal) * 100) : 0;
+        const wPct = revTotal > 0 ? Math.round((Number(s.walkin || 0) / revTotal) * 100) : 0;
+        const pPct = revTotal > 0 ? Math.max(0, 100 - mPct - wPct) : 0;
+        if (!cal.dayFilter) cal.dayFilter = 'all';
+        const show = k => cal.dayFilter === 'all' || cal.dayFilter === k;
+
+        slot.innerHTML = `
+          <div class="ca-day-head">
+            <div><div class="staff-kicker">SELECTED DAY</div><h3 style="margin:0">${esc(fmtDay(dateStr))}</h3><p style="margin:4px 0 0;color:#8c988f;font-size:11px">${s.checkins || 0} check-ins · ${payments.length + walkins.length + sales.length} transactions</p></div>
+            <div class="ca-day-steps">
+              <button type="button" class="ca-step" id="ca-day-prev" title="Previous day" aria-label="Previous day">‹</button>
+              <button type="button" class="ca-step" id="ca-day-next" title="Next day" aria-label="Next day">›</button>
+            </div>
           </div>
-          <div class="rp-chart-foot"><span>${fmtShort(range.from)}</span><span>${fmtShort(range.to)}</span></div>
-        </section>
+          <div class="ca-day-metrics">
+            <div class="ca-day-stat"><span>REVENUE</span><strong>${peso(revTotal)}</strong></div>
+            <div class="ca-day-stat"><span>EXPENSES</span><strong>${peso(s.expenses || 0)}</strong></div>
+            <div class="ca-day-stat"><span>NET</span><strong>${peso(s.net_profit || 0)}</strong></div>
+          </div>
+          ${revTotal > 0 ? `
+            <div class="ca-mix-strip" aria-hidden="true">
+              ${mPct ? `<i style="width:${mPct}%;background:#264631"></i>` : ''}
+              ${wPct ? `<i style="width:${wPct}%;background:#78aa46"></i>` : ''}
+              ${pPct ? `<i style="width:${pPct}%;background:#b8db7a"></i>` : ''}
+            </div>
+            <div class="ca-mix-legend">
+              <span><i style="background:#264631"></i>Memberships ${peso(s.membership || 0)}</span>
+              <span><i style="background:#78aa46"></i>Walk-ins ${peso(s.walkin || 0)}</span>
+              <span><i style="background:#b8db7a"></i>Products ${peso(s.product || 0)}</span>
+            </div>` : ''}
+          ${anyActivity ? `
+            <div class="ca-day-tabs">
+              <button type="button" class="ca-day-tab ${cal.dayFilter === 'all' ? 'active' : ''}" data-day-tab="all">All</button>
+              ${(payments.length + walkins.length + sales.length) ? `<button type="button" class="ca-day-tab ${cal.dayFilter === 'tx' ? 'active' : ''}" data-day-tab="tx">Takings (${payments.length + walkins.length + sales.length})</button>` : ''}
+              ${visits.length ? `<button type="button" class="ca-day-tab ${cal.dayFilter === 'visits' ? 'active' : ''}" data-day-tab="visits">Check-ins (${visits.length})</button>` : ''}
+              ${expenses.length ? `<button type="button" class="ca-day-tab ${cal.dayFilter === 'expenses' ? 'active' : ''}" data-day-tab="expenses">Expenses (${expenses.length})</button>` : ''}
+            </div>` : ''}
+          <div class="ca-day-scroll">
+            ${!anyActivity ? '<div class="ca-day-empty"><b>Quiet day</b><span>No check-ins, sales, or expenses were recorded on this date.</span></div>' : ''}
+            ${show('tx') && payments.length ? `<div class="ca-day-group"><h4>Payments (${payments.length})</h4>${payments.map(p => `<div class="ca-day-item"><div><b>${esc(p.name)}</b><small>${esc(p.receipt_no)} · ${esc(p.method)} · ${esc(p.status)}</small></div><strong>${peso(p.amount)}</strong></div>`).join('')}</div>` : ''}
+            ${show('tx') && walkins.length ? `<div class="ca-day-group"><h4>Walk-ins (${walkins.length})</h4>${walkins.map(w => `<div class="ca-day-item"><div><b>${esc(w.name)}</b><small>${esc(w.receipt_no)} · ${esc(w.method)}</small></div><strong>${peso(w.amount)}</strong></div>`).join('')}</div>` : ''}
+            ${show('tx') && sales.length ? `<div class="ca-day-group"><h4>Product sales (${sales.length})</h4>${sales.map(x => `<div class="ca-day-item"><div><b>${esc(x.name)}</b><small>${esc(x.receipt_no)} · ${esc(x.method)}</small></div><strong>${peso(x.total)}</strong></div>`).join('')}</div>` : ''}
+            ${show('visits') && visits.length ? `<div class="ca-day-group"><h4>Check-ins (${visits.length})</h4>${visits.map(v => `<div class="ca-day-item"><div><b>${esc(v.member_name)}</b><small>${esc(v.member_no)} · in ${esc(ui.chTime(v.checked_in_at))}${v.checked_out_at ? ` · out ${esc(ui.chTime(v.checked_out_at))}` : ' · still inside'}</small></div></div>`).join('')}</div>` : ''}
+            ${cal.dayFilter === 'all' && newMembers.length ? `<div class="ca-day-group"><h4>New members (${newMembers.length})</h4>${newMembers.map(m => `<div class="ca-day-item"><div><b>${esc(m.full_name)}</b><small>${esc(m.member_no)}</small></div><span class="status-tag">${esc(m.status)}</span></div>`).join('')}</div>` : ''}
+            ${show('expenses') && expenses.length ? `<div class="ca-day-group"><h4>Expenses (${expenses.length})</h4>${expenses.map(e => `<div class="ca-day-item"><div><b>${esc(e.description)}</b><small>${esc(e.category)} · ${esc(e.method)}</small></div><strong>−${peso(e.amount)}</strong></div>`).join('')}</div>` : ''}
+          </div>`;
 
-        <section class="card rp-mix-card">
-          <div class="panel-head"><div><div class="staff-kicker">HOW THEY PAY</div><h3>Payment mix</h3><p>Cash versus online, this period.</p></div></div>
-          ${methodRows.length ? methodRows.map(([name, amount]) => `
-            <div class="rp-method">
-              <div class="rp-method-head"><span>${esc(name)}</span><b>${peso(amount)}</b></div>
-              <div class="rp-method-bar"><span style="width:${Math.round((amount / methodMax) * 100)}%"></span></div>
-            </div>`).join('') : '<p class="sub">No payments recorded in this period yet.</p>'}
-        </section>
-      </div>
+        slot.querySelector('#ca-day-prev').onclick = () => stepDay(-1);
+        slot.querySelector('#ca-day-next').onclick = () => stepDay(1);
+        slot.querySelectorAll('[data-day-tab]').forEach(t => {
+          t.onclick = () => { cal.dayFilter = t.dataset.dayTab; paintDay(detail); };
+        });
+      };
 
-      <div class="rp-mid">
-        <section class="card rp-new-card">
-          <div class="panel-head"><div><div class="staff-kicker">GROWTH</div><h3>Newest members</h3><p>Joined during this period.</p></div><span class="rp-pill">${newMembers} new</span></div>
-          ${topMembers.length ? topMembers.map(m => `
-            <div class="rp-new-row">${memberAvatar(m)}
-              <div><strong>${esc(m.full_name)}</strong><small>${esc(m.member_no)} · joined ${esc(fmtDay(m.joined_on))}</small></div>
-              <span class="status-tag ${m.effective_status === 'Deactivated' ? 'status-deactivated' : ''}">${esc(m.effective_status)}</span></div>`).join('') : '<p class="sub">No new members in this period.</p>'}
-        </section>
+      const cached = dayDetailCache.get(dateStr);
+      if (cached) { paintDay(cached); }
+      try {
+        const fresh = await call('calendar_day_detail', { p_date: dateStr });
+        dayDetailCache.set(dateStr, fresh);
+        paintDay(fresh);
+      } catch (err) {
+        if (!cached && slot.isConnected) slot.innerHTML = `<p class="sub">${esc(friendly(err))}</p>`;
+      }
+    };
 
-        <section class="card rp-export-card">
-          <div class="panel-head"><div><div class="staff-kicker">TAKE IT OFFLINE</div><h3>Export</h3><p>Download every transaction in this period as a spreadsheet.</p></div></div>
-          <div class="rp-export-figure"><strong>${transactions.length}</strong><span>transactions ready</span></div>
-          <button class="login-submit" id="report-export">Export transactions ↓</button>
-          <p class="rp-export-note">Opens as CSV — Excel, Numbers or Google Sheets.</p>
-        </section>
-      </div>
+    paintControls(baseYears);
+    const cacheKey = `${range.from}:${range.to}`;
+    const cachedRange = analyticsCache.get(cacheKey);
+    if (cachedRange) {
+      paintAnalytics(cachedRange);
+    } else {
+      bodyEl.innerHTML = '<div class="card"><p class="sub" style="padding:18px 0">Loading historical analytics…</p></div>';
+    }
 
-      <section class="card page-panel rp-table-card"><div class="panel-head"><div><div class="staff-kicker">THE LEDGER</div><h3>Transactions</h3><p>Every recorded payment in this period, newest first.</p></div></div>
-        <div class="report-table-wrap"><table class="report-table"><thead><tr><th>PERSON / REFERENCE</th><th>TYPE</th><th>DATE</th><th>METHOD</th><th>STATUS</th><th>AMOUNT</th><th></th></tr></thead><tbody>${transactions.length ? transactions.map(t => `<tr class="${t.voided ? 'row-is-voided' : ''}"><td><strong>${esc(t.name)}</strong><small>${esc(t.type)}</small></td><td><span class="report-type ${t.category === 'Walk-in' ? 'walk' : ''}">${t.category}</span></td><td>${esc(fmtDay(t.date))}</td><td>${esc(t.method)}</td><td><span class="status-tag${t.voided ? ' status-deactivated' : ''}">${esc(t.status)}</span>${t.voided && t.reason ? `<small class="void-reason">${esc(t.reason)}</small>` : ''}</td><td class="report-amount${t.voided ? ' voided-amount' : ''}">${peso(t.amount)}</td><td>${!t.voided && t.status !== 'pending' ? `<button class="outline row-void" data-id="${t.id}" data-kind="${t.kind}" data-ref="${esc(t.type)}">Void</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="7" class="report-empty">No transactions in this period.</td></tr>'}</tbody></table></div></section>`;
-    ownerContent.querySelectorAll('.row-void').forEach(button => button.onclick = () => voidTransaction(button.dataset.kind, button.dataset.id, button.dataset.ref));
-    ownerContent.querySelector('#report-export').onclick = () => downloadCsv('gimmda-transactions.csv', [['Name', 'Reference', 'Type', 'Date', 'Method', 'Status', 'Amount'], ...transactions.map(t => [t.name, t.type, t.category, t.date, t.method, t.status, t.amount])]);
+    call('calendar_analytics', { p_from: range.from, p_to: range.to })
+      .then(fresh => {
+        analyticsCache.set(cacheKey, fresh);
+        paintAnalytics(fresh);
+      })
+      .catch(err => {
+        if (!cachedRange && bodyEl.isConnected) {
+          bodyEl.innerHTML = `<div class="card"><p class="sub">${esc(friendly(err))}</p></div>`;
+        }
+      });
   }
 
 
@@ -2646,8 +3586,8 @@
     if (animate) revealDashboard(staffContent);
   }
 
-  function staffHeading(kicker, title, sub) {
-    return `<div class="rp-head"><div><div class="eyebrow" style="color:#8ba284">${kicker}</div><h2>${title}</h2><p>${sub}</p></div></div>`;
+  function staffHeading(kicker, title, sub, rightHtml = '') {
+    return `<div class="rp-head"><div><div class="eyebrow" style="color:#8ba284">${kicker}</div><h2>${title}</h2><p>${sub}</p></div>${rightHtml ? `<div>${rightHtml}</div>` : ''}</div>`;
   }
 
   function renderStaffOverview() {
@@ -2660,7 +3600,9 @@
     const todayProd = live.sales.filter(s2 => !s2.voided_at && String(s2.sold_on).slice(0, 10) === today).reduce((n, s2) => n + Number(s2.total || 0), 0);
     const todayWalk = live.walkins.filter(w => !w.voided_at && String(w.visited_on).slice(0, 10) === today).reduce((n, w) => n + Number(w.amount || 0), 0);
     const todaySales = todayPay + todayProd + todayWalk;
-    const pendingCount = live.payments.filter(p => p.status === 'pending').length;
+    const pendingPayCount = live.payments.filter(p => p.status === 'pending').length;
+    const pendingApprovalCount = (live.approvals || []).filter(a => a.status === 'pending').length;
+    const pendingCount = pendingPayCount + pendingApprovalCount;
     const days7 = lastDays(7);
     const rev7 = days7.map(d =>
       live.payments.filter(p => !p.voided_at && String(p.paid_on).slice(0, 10) === d.iso).reduce((n, p) => n + Number(p.amount || 0), 0)
@@ -2672,9 +3614,12 @@
     staffShell.querySelector('.intro h1').innerHTML = `Good day, <em>${esc(firstName)}.</em>`;
     staffShell.querySelector('.avatar').textContent = currentIdentity().ini;
     staffShell.querySelector('.avatar').title = currentIdentity().label;
-    const myShifts = (live.shifts || []).filter(sh => sh.staff_id === live.profile.id);
-    const clockedIn = myShifts.find(sh => !sh.clocked_out_at);
     const attention = live.members.filter(m => m.expiring_soon || (m.expired && m.status === 'Active')).slice(0, 6);
+    if (!live.staffActDate || live.staffActDayAnchor !== today) {
+      live.staffActDate = today;
+      live.staffActDayAnchor = today;
+      live.staffActPage = 1;
+    }
 
     staffContent.innerHTML = `
       ${staffHeading('YOUR DAY AT HILL', 'Operations overview', 'A live picture of what needs attention today.')}
@@ -2696,21 +3641,6 @@
         </div>
       </div>
 
-      <section class="staff-shift-card">
-        <div class="staff-shift-head">
-          <span class="staff-shift-badge ${clockedIn ? 'is-live' : ''}">${clockedIn ? '●' : '◷'}</span>
-          <div class="staff-shift-meta">
-            <div class="staff-kicker" style="margin-bottom:2px">YOUR SHIFT</div>
-            <h3>${clockedIn ? 'On shift now' : 'Not clocked in'}</h3>
-            <p>${clockedIn ? 'Clocked in at ' + esc(chTime(clockedIn.clocked_in_at)) : 'Clock in when you start so the owner can see coverage.'}</p>
-          </div>
-        </div>
-        <div class="staff-shift-right">
-          ${myShifts.length ? `<div class="staff-shift-pills">${myShifts.slice(0, 3).map(sh => `<span class="staff-shift-pill">${esc(fmtDay(String(sh.clocked_in_at).slice(0, 10)))} · ${esc(chTime(sh.clocked_in_at))}${sh.clocked_out_at ? ' – ' + esc(chTime(sh.clocked_out_at)) : ' (live)'}</span>`).join('')}</div>` : ''}
-          <button class="${clockedIn ? 'outline' : 'login-submit'}" id="shift-toggle" style="width:auto;padding:0 18px;height:38px">${clockedIn ? 'Clock out' : 'Clock in'}</button>
-        </div>
-      </section>
-
       <div class="rp-mid">
         <section class="card staff-panel">
           <div class="panel-head"><div><div class="staff-kicker">FRONT DESK</div><h3>Quick member lookup</h3><p>Find a member to check in, view photo, or renew.</p></div></div>
@@ -2723,18 +3653,102 @@
         </section>
       </div>
 
-      <section class="staff-table-card">
-        <div class="panel-head"><div><div class="staff-kicker">TODAY’S ACTIVITY</div><h3>What your team recorded</h3><p>Newest first · Philippine time.</p></div></div>
-        ${live.activity.slice(0, 8).map(a => `<div class="attention-row"><div><strong>${esc(a.summary)}</strong><small>${esc(a.actor_name || 'Gym')} · ${esc(phDateTime(a.created_at))}</small></div></div>`).join('') || '<p class="sub">No activity yet.</p>'}
+      <section class="staff-table-card" id="staff-daily-activity">
+        <div class="panel-head" style="flex-wrap:wrap;gap:12px">
+          <div>
+            <div class="staff-kicker" id="staff-act-kicker">${live.staffActDate === today ? 'TODAY’S ACTIVITY' : 'DAILY ACTIVITY'}</div>
+            <h3>What your team recorded</h3>
+            <p id="staff-act-sub">Showing ${esc(fmtDay(live.staffActDate))} · Philippine time.</p>
+          </div>
+          <div class="daily-log-controls">
+            <button type="button" class="ca-step" id="staff-act-prev" title="Previous day" aria-label="Previous day">‹</button>
+            <input type="date" class="ca-date-input" id="staff-act-date" value="${esc(live.staffActDate)}" max="${today}" aria-label="Activity date">
+            <button type="button" class="ca-step" id="staff-act-next" title="Next day" aria-label="Next day" ${live.staffActDate >= today ? 'disabled' : ''}>›</button>
+            <button type="button" class="outline" id="staff-act-today" ${live.staffActDate === today ? 'disabled' : ''}>Today</button>
+          </div>
+        </div>
+        <div id="staff-act-list"></div>
+        <div id="staff-act-pager"></div>
       </section>`;
 
-    staffContent.querySelector('#shift-toggle').onclick = async () => {
-      try {
-        if (clockedIn) { await call('clock_out'); toastLive('Clocked out. Have a good one.'); }
-        else { await call('clock_in'); toastLive('Clocked in. Have a great shift.'); }
-        await refreshData(true); renderStaffOverview();
-      } catch (error) { toastLive(friendly(error)); }
+    const phDayOf = ts => ts ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts)) : '';
+    const shiftIso = (iso, delta) => {
+      const [y, m, d] = iso.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
     };
+    const staffActCache = new Map();
+    const PAGE_SIZE = 6;
+
+    const paintActivityDay = rows => {
+      const listEl = staffContent.querySelector('#staff-act-list');
+      const pagerEl = staffContent.querySelector('#staff-act-pager');
+      const subEl = staffContent.querySelector('#staff-act-sub');
+      const kickerEl = staffContent.querySelector('#staff-act-kicker');
+      if (!listEl || !listEl.isConnected) return;
+      const dStr = live.staffActDate;
+      if (kickerEl) kickerEl.textContent = dStr === today ? 'TODAY’S ACTIVITY' : 'PAST ACTIVITY';
+      if (subEl) subEl.textContent = `${rows.length} record${rows.length === 1 ? '' : 's'} on ${fmtDay(dStr)} · Philippine time.`;
+      if (!rows.length) {
+        listEl.innerHTML = `<p class="sub" style="padding:12px 0">No activity recorded on ${esc(fmtDay(dStr))}.</p>`;
+        if (pagerEl) pagerEl.innerHTML = '';
+        return;
+      }
+      const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+      if (live.staffActPage > totalPages) live.staffActPage = totalPages;
+      const page = live.staffActPage;
+      const slice = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+      listEl.innerHTML = slice.map(a => `<div class="attention-row"><div><strong>${esc(a.summary)}</strong><small>${esc(a.actor_name || 'Gym')} · ${esc(phDateTime(a.created_at))}</small></div></div>`).join('');
+
+      if (!pagerEl) return;
+      if (totalPages <= 1) { pagerEl.innerHTML = ''; return; }
+      const pages = Array.from({ length: totalPages }, (_, i) => i + 1)
+        .filter(n => n === 1 || n === totalPages || Math.abs(n - page) <= 1);
+      let nums = '';
+      let prev = 0;
+      for (const n of pages) {
+        if (prev && n - prev > 1) nums += '<span class="owner-pager-gap">…</span>';
+        nums += `<button type="button" class="owner-page-num ${n === page ? 'is-current' : ''}" data-ap="${n}">${n}</button>`;
+        prev = n;
+      }
+      pagerEl.innerHTML = `<div class="owner-pager"><span class="owner-pager-count">Showing ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, rows.length)} of ${rows.length}</span><div class="owner-pager-buttons"><button type="button" class="outline" id="ap-prev" ${page <= 1 ? 'disabled' : ''}>‹ Prev</button><div class="owner-pager-pages">${nums}</div><button type="button" class="outline" id="ap-next" ${page >= totalPages ? 'disabled' : ''}>Next ›</button></div></div>`;
+      pagerEl.querySelector('#ap-prev')?.addEventListener('click', () => { live.staffActPage -= 1; paintActivityDay(rows); });
+      pagerEl.querySelector('#ap-next')?.addEventListener('click', () => { live.staffActPage += 1; paintActivityDay(rows); });
+      pagerEl.querySelectorAll('[data-ap]').forEach(btn => btn.onclick = () => { live.staffActPage = Number(btn.dataset.ap); paintActivityDay(rows); });
+    };
+
+    const loadActivityDay = async () => {
+      const dStr = live.staffActDate;
+      const dateInput = staffContent.querySelector('#staff-act-date');
+      const prevBtn = staffContent.querySelector('#staff-act-prev');
+      const nextBtn = staffContent.querySelector('#staff-act-next');
+      const todayBtn = staffContent.querySelector('#staff-act-today');
+      if (dateInput) dateInput.value = dStr;
+      if (nextBtn) nextBtn.disabled = dStr >= today;
+      if (todayBtn) todayBtn.disabled = dStr === today;
+
+      const localMatches = live.activity.filter(a => phDayOf(a.created_at) === dStr);
+      paintActivityDay(staffActCache.get(dStr) || localMatches);
+      try {
+        const { data, error } = await sb
+          .from('activity_log')
+          .select('*')
+          .gte('created_at', `${dStr}T00:00:00+08:00`)
+          .lte('created_at', `${dStr}T23:59:59.999+08:00`)
+          .order('created_at', { ascending: false })
+          .limit(200);
+        if (!error && Array.isArray(data)) {
+          const rows = data.length || dStr !== today ? data : localMatches;
+          staffActCache.set(dStr, rows);
+          paintActivityDay(rows);
+        }
+      } catch { /* fallback to localMatches */ }
+      if (prevBtn) prevBtn.onclick = () => { live.staffActDate = shiftIso(live.staffActDate, -1); live.staffActPage = 1; loadActivityDay(); };
+      if (nextBtn) nextBtn.onclick = () => { const n = shiftIso(live.staffActDate, 1); live.staffActDate = n > today ? today : n; live.staffActPage = 1; loadActivityDay(); };
+      if (todayBtn) todayBtn.onclick = () => { live.staffActDate = today; live.staffActPage = 1; loadActivityDay(); };
+      if (dateInput) dateInput.onchange = () => { if (dateInput.value) { live.staffActDate = dateInput.value > today ? today : dateInput.value; live.staffActPage = 1; loadActivityDay(); } };
+    };
+    loadActivityDay();
+
     const input = staffContent.querySelector('#quick');
     const results = staffContent.querySelector('#quick-results');
     input.oninput = () => {
@@ -3124,6 +4138,69 @@
     dialog.showModal();
   }
 
+  function openWalkinModal() {
+    const fee = live.settings?.walkin_fee;
+    const box = document.createElement('dialog');
+    box.className = 'renew-dialog';
+    box.id = 'walkin-modal';
+    box.innerHTML = `<form class="renew-inner" id="walkin-live">
+      <div class="renew-header">
+        <div><div class="eyebrow" style="color:#87a278">DAY PASS</div><h2>Record a walk-in</h2><p>Confirm payment before logging a day visitor.</p></div>
+        <button type="button" class="renew-close" aria-label="Close">×</button>
+      </div>
+      <div class="renew-expiry"><span>Walk-in fee</span><strong>${fee === null || fee === undefined ? 'Not set by owner' : peso(fee)}</strong></div>
+      <label class="field" for="w-method">Payment method</label>
+      <select class="login-input" id="w-method"><option>Cash</option><option>GCash</option><option>Bank transfer</option><option>E-wallet</option><option>Other</option></select>
+      <div id="w-ref-wrap" hidden>
+        <label class="field" for="w-reference">Online transaction reference</label>
+        <input class="login-input" id="w-reference" maxlength="100" placeholder="Enter payment reference">
+        <p class="sub">Check the gym’s account independently before confirming.</p>
+      </div>
+      <label class="field" for="w-amount">Amount received (₱)</label>
+      <input class="login-input" id="w-amount" type="number" min="0" step="0.01" value="${fee ?? ''}" required ${fee === null || fee === undefined ? 'disabled' : ''}>
+      <p class="sub" style="margin-top:10px">${fee === null || fee === undefined ? 'The owner must set a walk-in fee in Settings first.' : 'Recorded without a visitor name · synced to owner reports.'}</p>
+      <div class="renew-actions">
+        <button type="button" class="outline" id="w-cancel">Cancel</button>
+        <button type="submit" class="login-submit" id="w-submit" ${fee === null || fee === undefined ? 'disabled' : ''}>Confirm walk-in ↗</button>
+      </div>
+    </form>`;
+    document.body.append(box);
+    const close = () => { box.close(); box.remove(); };
+    box.querySelector('.renew-close').onclick = close;
+    box.querySelector('#w-cancel').onclick = close;
+    box.addEventListener('cancel', e => { e.preventDefault(); close(); });
+
+    const method = box.querySelector('#w-method');
+    method.onchange = () => {
+      const online = method.value !== 'Cash';
+      box.querySelector('#w-ref-wrap').hidden = !online;
+      box.querySelector('#w-reference').required = online;
+    };
+    let walkinSaving = false;
+    box.querySelector('#walkin-live').onsubmit = async event => {
+      event.preventDefault();
+      if (walkinSaving) return;
+      const amount = Number(box.querySelector('#w-amount').value);
+      const reference = box.querySelector('#w-reference').value.trim();
+      if (method.value !== 'Cash' && !reference) return toastLive('Enter the online payment reference.');
+      walkinSaving = true;
+      const btn = box.querySelector('#w-submit');
+      if (btn) btn.disabled = true;
+      try {
+        const row = await ui.call('record_walkin', { p_name: null, p_phone: null, p_amount: amount, p_method: method.value, p_reference: reference || null });
+        close();
+        toastLive(`Walk-in recorded · ${row.receipt_no}`);
+        await refreshData(true);
+        renderStaffCheckins();
+      } catch (error) {
+        toastLive(friendly(error));
+        walkinSaving = false;
+        if (btn && fee !== null && fee !== undefined) btn.disabled = false;
+      }
+    };
+    box.showModal();
+  }
+
   function renderStaffCheckins() {
     const today = phToday();
     const todayVisits = live.visits.filter(v => v.visit_date === today);
@@ -3131,27 +4208,32 @@
     const open = live.visits.filter(v => !v.checked_out_at);
     const expiring = live.members.filter(m => m.expiring_soon).length;
     const fee = live.settings?.walkin_fee;
-    const todaysWalkins = live.walkins.filter(w => !w.voided_at && String(w.visited_on).slice(0, 10) === today);
-    const walkinTotal = todaysWalkins.reduce((n, w) => n + Number(w.amount || 0), 0);
-    const walkinCash = todaysWalkins.filter(w => w.method === 'Cash').reduce((n, w) => n + Number(w.amount || 0), 0);
+    const todaysWalkins = live.walkins.filter(w => String(w.visited_on).slice(0, 10) === today);
+    const walkinTotal = todaysWalkins.filter(w => !w.voided_at).reduce((n, w) => n + Number(w.amount || 0), 0);
+    const walkinCash = todaysWalkins.filter(w => !w.voided_at && w.method === 'Cash').reduce((n, w) => n + Number(w.amount || 0), 0);
     const days7 = lastDays(7);
     const traffic7 = days7.map(d =>
       live.visits.filter(v => String(v.visit_date).slice(0, 10) === d.iso).length
       + live.walkins.filter(w => !w.voided_at && String(w.visited_on).slice(0, 10) === d.iso).length
     );
     const peak7 = Math.max(0, ...traffic7);
+    if (!live.staffVisitDate || live.staffVisitDayAnchor !== today) {
+      live.staffVisitDate = today;
+      live.staffVisitDayAnchor = today;
+      live.staffVisitPage = 1;
+    }
 
     staffContent.innerHTML = `
-      ${staffHeading('FRONT DESK & ENTRY', 'Check-ins & Walk-ins', 'Verify member entry, record day-pass walk-ins, and track who is inside today.')}
+      ${staffHeading('FRONT DESK & ENTRY', 'Check-ins & Walk-ins', 'Search members by name or phone to check in, and log walk-in day passes.', `<button type="button" class="login-submit" id="open-walkin-modal" style="width:auto;height:40px;padding:0 18px">+ Record walk-in ↗</button>`)}
       <div class="rp-top">
         ${bentoHero({
           label: 'TODAY’S GYM TRAFFIC',
-          valueHtml: `<strong>${todayVisits.length + todaysWalkins.length}</strong>`,
-          sub: `${uniqueToday} unique member${uniqueToday === 1 ? '' : 's'} · ${todaysWalkins.length} walk-in${todaysWalkins.length === 1 ? '' : 's'} (${peso(walkinTotal)})`,
+          valueHtml: `<strong>${todayVisits.length + todaysWalkins.filter(w => !w.voided_at).length}</strong>`,
+          sub: `${uniqueToday} unique member${uniqueToday === 1 ? '' : 's'} · ${todaysWalkins.filter(w => !w.voided_at).length} walk-in${todaysWalkins.length === 1 ? '' : 's'} (${peso(walkinTotal)})`,
           sparkLabel: '7-DAY TRAFFIC',
           sparkPeak: `Peak ${peak7}/day`,
           points: traffic7,
-          split: [['OPEN VISITS', open.length], ['WALK-INS TODAY', todaysWalkins.length], ['WALK-IN SALES', peso(walkinTotal)]]
+          split: [['OPEN VISITS', open.length], ['WALK-INS TODAY', todaysWalkins.filter(w => !w.voided_at).length], ['WALK-IN SALES', peso(walkinTotal)]]
         })}
         <div class="rp-kpis">
           <article class="rp-kpi"><span class="rp-kpi-icon">♙</span><div><small>MEMBER CHECK-INS</small><strong>${todayVisits.length}</strong><em>${uniqueToday} unique today</em></div></article>
@@ -3163,120 +4245,167 @@
 
       <div class="walkin-layout" style="margin-bottom:16px">
         <section class="card attendance-lookup">
-          <div class="staff-kicker">MEMBER VERIFICATION</div>
+          <div class="staff-kicker">QUICK CHECK-IN</div>
           <h3>Find a member</h3>
-          <p>Enter the member ID, or scan the QR from their member pass.</p>
-          <form id="att-lookup">
-            <label class="field" for="att-id">Member ID</label>
-            <input class="login-input" id="att-id" placeholder="e.g. HFG-235211" required autocomplete="off">
-            <button class="login-submit">Find member ↗</button>
-          </form>
-          <div class="attendance-note">✳ &nbsp; Verify identity and membership in person before confirming entry.</div>
+          <p>Type a name, phone number, or ID for one-click check-in.</p>
+          <input class="login-input" id="att-search" placeholder="Search by name, phone, or ID (e.g. Ian)…" autocomplete="off" aria-label="Find a member by name, phone, or ID">
+          <div id="att-results" class="quick-checkin-list"></div>
         </section>
 
-        <section class="staff-walkin-card">
-          <div class="panel-head"><div><div class="staff-kicker">DAY PASS</div><h3>Record a walk-in</h3><p>Confirm payment before logging a day visitor.</p></div></div>
-          <form id="walkin-live">
-            <div class="renew-expiry" style="margin-top:0"><span>Walk-in fee</span><strong>${fee === null || fee === undefined ? 'Not set by owner' : peso(fee)}</strong></div>
-            <label class="field" for="w-method">Payment method</label>
-            <select class="login-input" id="w-method"><option>Cash</option><option>GCash</option><option>Bank transfer</option><option>E-wallet</option><option>Other</option></select>
-            <div id="w-ref-wrap" hidden>
-              <label class="field" for="w-reference">Online transaction reference</label>
-              <input class="login-input" id="w-reference" maxlength="100" placeholder="Enter payment reference">
-              <p class="sub">Check the gym’s account independently before confirming.</p>
+        <div class="checkin-stack">
+          <section class="card attendance-current">
+            <div class="panel-head"><div><div class="staff-kicker">OPEN VISITS</div><h3>Currently checked in</h3><p>Recorded visits without a checkout.</p></div><span class="status-tag">${open.length} open</span></div>
+            ${open.length ? open.map(v => { const m = live.members.find(x => x.id === v.member_id); return `<div class="staff-row">${memberAvatar(m)}<div class="staff-row-main"><strong>${esc(m?.full_name || 'Member')}</strong><small>${esc(m?.member_no || '')} · In ${esc(phDateTime(v.checked_in_at))}</small></div><button class="outline att-correct" data-visit="${v.id}">Correct exit</button><button class="outline att-out" data-member="${v.member_id}">Check out</button></div>`; }).join('') : '<div class="attendance-empty">No open visits right now.</div>'}
+          </section>
+
+          <section class="staff-walkin-card">
+            <div class="panel-head">
+              <div><div class="staff-kicker">DAY PASS</div><h3>Today’s walk-ins</h3><p>${todaysWalkins.filter(w => !w.voided_at).length} recorded today.</p></div>
+              <div style="display:flex;align-items:center;gap:8px"><span class="status-tag">${peso(walkinTotal)}</span><button type="button" class="outline" id="open-walkin-inline">+ Walk-in</button></div>
             </div>
-            <label class="field" for="w-amount">Amount received (₱)</label>
-            <input class="login-input" id="w-amount" type="number" min="0" step="0.01" value="${fee ?? ''}" required ${fee === null || fee === undefined ? 'disabled' : ''}>
-            <button class="login-submit" id="w-submit" style="margin-top:20px" ${fee === null || fee === undefined ? 'disabled' : ''}>Confirm walk-in ↗</button>
-            <p class="sub">${fee === null || fee === undefined ? 'The owner must set a walk-in fee in Settings first.' : 'Recorded without a visitor name · synced to owner reports.'}</p>
-          </form>
-        </section>
-      </div>
-
-      <div class="walkin-layout" style="margin-bottom:16px">
-        <section class="card attendance-current">
-          <div class="panel-head"><div><div class="staff-kicker">OPEN VISITS</div><h3>Currently checked in</h3><p>Recorded visits without a checkout.</p></div><span class="status-tag">${open.length} open</span></div>
-          ${open.length ? open.map(v => { const m = live.members.find(x => x.id === v.member_id); return `<div class="staff-row">${memberAvatar(m)}<div class="staff-row-main"><strong>${esc(m?.full_name || 'Member')}</strong><small>${esc(m?.member_no || '')} · In ${esc(phDateTime(v.checked_in_at))}</small></div><button class="outline att-correct" data-visit="${v.id}">Correct exit</button><button class="outline att-out" data-member="${v.member_id}">Check out</button></div>`; }).join('') : '<div class="attendance-empty">No open visits right now.</div>'}
-        </section>
-
-        <section class="staff-walkin-card">
-          <div class="panel-head"><div><div class="staff-kicker">TODAY</div><h3>Today’s walk-ins</h3><p>${todaysWalkins.length} recorded today.</p></div><span class="status-tag">${peso(walkinTotal)}</span></div>
-          <div id="w-list">${todaysWalkins.length ? todaysWalkins.map(p => `<div class="attention-row"><div><strong>${esc(p.receipt_no)} · Day pass</strong><small>${esc(p.method)}${p.reference ? ' · Ref ' + esc(p.reference) : ''} · ${esc(chTime(p.created_at))}</small></div><span>${peso(p.amount)}</span></div>`).join('') : '<p class="sub">No walk-ins yet today.</p>'}</div>
-        </section>
+            <div id="w-list">${todaysWalkins.length ? todaysWalkins.map(p => {
+              const pend = hasPendingApproval('void_walkin', p.id);
+              const action = p.voided_at
+                ? '<span class="status-tag status-deactivated">Voided</span>'
+                : pend
+                  ? '<span class="status-tag status-expiring">Pending owner</span>'
+                  : `<button class="outline staff-req-void" data-kind="void_walkin" data-id="${p.id}" data-label="${esc(p.receipt_no)} · ${peso(p.amount)}">Request void</button>`;
+              return `<div class="attention-row"><div><strong>${esc(p.receipt_no)} · Day pass</strong><small>${esc(p.method)}${p.reference ? ' · Ref ' + esc(p.reference) : ''} · ${esc(chTime(p.created_at))}</small></div><span style="${p.voided_at ? 'text-decoration:line-through;opacity:.55' : ''}">${peso(p.amount)}</span>${action}</div>`;
+            }).join('') : '<p class="sub">No walk-ins yet today. Use <b>+ Record walk-in</b> to add one.</p>'}</div>
+          </section>
+        </div>
       </div>
 
       <section class="staff-table-card">
-        <div class="panel-head"><div><div class="staff-kicker">THE ACTIVITY LOG</div><h3>Recent member check-ins</h3><p>Check-ins and checkouts · Philippine time.</p></div></div>
-        ${live.visits.slice(0, 12).map(v => { const m = live.members.find(x => x.id === v.member_id); return `<div class="staff-row">${memberAvatar(m)}<div class="staff-row-main"><strong>${esc(m?.full_name || 'Member')} · ${v.checked_out_at ? 'Checkout' : 'Check-in'}</strong><small>${esc(m?.member_no || '')} · ${esc(phDateTime(v.checked_out_at || v.checked_in_at))}</small></div></div>`; }).join('') || '<div class="attendance-empty">No entry or exit activity yet.</div>'}
+        <div class="panel-head" style="flex-wrap:wrap;gap:12px">
+          <div>
+            <div class="staff-kicker" id="visit-log-kicker">${live.staffVisitDate === today ? 'TODAY’S CHECK-INS' : 'PAST CHECK-INS'}</div>
+            <h3>Member check-in log</h3>
+            <p id="visit-log-sub">Showing ${esc(fmtDay(live.staffVisitDate))} · Philippine time.</p>
+          </div>
+          <div class="daily-log-controls">
+            <button type="button" class="ca-step" id="vl-prev" title="Previous day" aria-label="Previous day">‹</button>
+            <input type="date" class="ca-date-input" id="vl-date" value="${esc(live.staffVisitDate)}" max="${today}" aria-label="Check-in log date">
+            <button type="button" class="ca-step" id="vl-next" title="Next day" aria-label="Next day" ${live.staffVisitDate >= today ? 'disabled' : ''}>›</button>
+            <button type="button" class="outline" id="vl-today" ${live.staffVisitDate === today ? 'disabled' : ''}>Today</button>
+          </div>
+        </div>
+        <div id="vl-list"></div>
+        <div id="vl-pager"></div>
       </section>`;
 
-    const method = staffContent.querySelector('#w-method');
-    method.onchange = () => {
-      const online = method.value !== 'Cash';
-      staffContent.querySelector('#w-ref-wrap').hidden = !online;
-      staffContent.querySelector('#w-reference').required = online;
-    };
-    let walkinSaving = false;
-    staffContent.querySelector('#walkin-live').onsubmit = async event => {
-      event.preventDefault();
-      if (walkinSaving) return;
-      const amount = Number(staffContent.querySelector('#w-amount').value);
-      const reference = staffContent.querySelector('#w-reference').value.trim();
-      if (method.value !== 'Cash' && !reference) return toastLive('Enter the online payment reference.');
-      walkinSaving = true;
-      const btn = staffContent.querySelector('#w-submit');
-      if (btn) btn.disabled = true;
-      try {
-        const row = await ui.call('record_walkin', { p_name: null, p_phone: null, p_amount: amount, p_method: method.value, p_reference: reference || null });
-        toastLive(`Walk-in recorded · ${row.receipt_no}`);
-        await refreshData(true);
-        renderStaffCheckins();
-      } catch (error) {
-        toastLive(friendly(error));
-      } finally {
-        walkinSaving = false;
-        if (btn && fee !== null && fee !== undefined) btn.disabled = false;
-      }
-    };
+    staffContent.querySelector('#open-walkin-modal').onclick = openWalkinModal;
+    staffContent.querySelector('#open-walkin-inline').onclick = openWalkinModal;
 
-    staffContent.querySelector('#att-lookup').onsubmit = async event => {
-      event.preventDefault();
-      const raw = staffContent.querySelector('#att-id').value.trim();
-      let member = null;
-      if (raw.toUpperCase().startsWith('GIMMDA:')) {
-        const code = raw.split(':').pop();
-        try {
-          const scanned = await ui.call('validate_member_pass', { p_code: code });
-          member = live.members.find(m => m.id === scanned.member_id);
-          toastLive(`${scanned.full_name} · pass verified.`);
-        } catch (error) {
-          const passMessages = {
-            PASS_INVALID: 'This pass is not valid. Ask the member to refresh their pass.',
-            PASS_USED: 'This pass was already used. Ask the member to refresh their pass.',
-            PASS_EXPIRED: 'This pass expired. Ask the member to refresh their pass.'
-          };
-          const message = String(error?.message || '');
-          const key = Object.keys(passMessages).find(code2 => message.includes(code2));
-          return toastLive(key ? passMessages[key] : friendly(error));
-        }
-      } else {
-        member = live.members.find(m => m.member_no.toUpperCase() === raw.toUpperCase());
-      }
-      if (!member) return toastLive('Member not found. Check the ID and try again.');
-      const openVisit = live.visits.find(v => v.member_id === member.id && !v.checked_out_at);
-      if (openVisit) {
-        if (!await confirmDialog({ title: 'Confirm checkout', body: `<b>${esc(member.full_name)}</b> is still recorded inside since ${esc(phDateTime(openVisit.checked_in_at))}.`, confirm: 'Record checkout' })) return;
-        try { await ui.call('check_out', { p_member_id: member.id }); toastLive('Checkout recorded.'); await refreshData(true); renderStaffCheckins(); } catch (error) { toastLive(friendly(error)); }
+    const searchInput = staffContent.querySelector('#att-search');
+    const resultsBox = staffContent.querySelector('#att-results');
+    const drawLookup = () => {
+      const q = (searchInput?.value || '').trim().toLowerCase();
+      const pool = live.members.filter(m => !m.archived_at && !m.merged_into);
+      const matches = q
+        ? pool.filter(m => [m.full_name, m.phone, m.email, m.member_no].join(' ').toLowerCase().includes(q)).slice(0, 7)
+        : pool.filter(m => m.effective_status === 'Active').slice(0, 5);
+      if (!matches.length) {
+        resultsBox.innerHTML = `<p class="sub" style="padding:12px 0">${q ? 'No matching members found. Try another name or phone number.' : 'No active members yet.'}</p>`;
         return;
       }
-      if (member.effective_status !== 'Active') return toastLive('This membership is not active. Renew it before check-in.');
-      if (!await confirmDialog({ title: 'Confirm check-in', body: `<b>${esc(member.full_name)}</b> · ${esc(member.member_no)}<br>Plan expires ${esc(fmtDay(member.expires_on))}.<br><br>Confirm the member’s identity before entry.`, confirm: 'Check in' })) return;
-      try { await ui.call('check_in', { p_member_id: member.id }); toastLive('Check-in recorded.'); await refreshData(true); renderStaffCheckins(); } catch (error) { toastLive(friendly(error)); }
+      resultsBox.innerHTML = matches.map(m => {
+        const isOpen = open.some(v => v.member_id === m.id);
+        const btn = isOpen
+          ? `<button type="button" class="outline quick-act-out" data-id="${m.id}">Check out</button>`
+          : m.effective_status === 'Active'
+            ? `<button type="button" class="login-submit quick-checkin-btn quick-act-in" data-id="${m.id}">Check in ↗</button>`
+            : `<button type="button" class="outline quick-act-renew" data-id="${m.id}">Renew</button>`;
+        return `<div class="quick-checkin-row">${memberAvatar(m)}<div class="staff-row-main"><strong>${esc(m.full_name)}</strong><small>${esc(m.member_no)}${m.phone ? ' · ' + esc(m.phone) : ''} · ${m.expires_on ? 'exp ' + esc(fmtDay(m.expires_on)) : 'No plan'}</small></div><div class="quick-checkin-actions"><span class="status-tag ${m.effective_status === 'Active' ? '' : 'status-deactivated'}">${isOpen ? 'Inside' : m.effective_status}</span>${btn}</div></div>`;
+      }).join('');
+
+      resultsBox.querySelectorAll('.quick-act-in').forEach(b => b.onclick = async () => {
+        const m = live.members.find(x => x.id === b.dataset.id);
+        if (!m) return;
+        try { await ui.call('check_in', { p_member_id: m.id }); toastLive(`${m.full_name} checked in.`); await refreshData(true); renderStaffCheckins(); } catch (error) { toastLive(friendly(error)); }
+      });
+      resultsBox.querySelectorAll('.quick-act-out').forEach(b => b.onclick = async () => {
+        const m = live.members.find(x => x.id === b.dataset.id);
+        try { await ui.call('check_out', { p_member_id: b.dataset.id }); toastLive(`${m?.full_name || 'Member'} checked out.`); await refreshData(true); renderStaffCheckins(); } catch (error) { toastLive(friendly(error)); }
+      });
+      resultsBox.querySelectorAll('.quick-act-renew').forEach(b => b.onclick = () => openRenewalLive(b.dataset.id));
     };
+    if (searchInput) searchInput.oninput = drawLookup;
+    drawLookup();
+
+    const shiftIso = (iso, delta) => {
+      const [y, m, d] = iso.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+    };
+    const visitCache = new Map();
+    const V_PAGE_SIZE = 6;
+    const paintVisitDay = rows => {
+      const listEl = staffContent.querySelector('#vl-list');
+      const pagerEl = staffContent.querySelector('#vl-pager');
+      const subEl = staffContent.querySelector('#visit-log-sub');
+      const kickerEl = staffContent.querySelector('#visit-log-kicker');
+      if (!listEl || !listEl.isConnected) return;
+      const dStr = live.staffVisitDate;
+      if (kickerEl) kickerEl.textContent = dStr === today ? 'TODAY’S CHECK-INS' : 'PAST CHECK-INS';
+      if (subEl) subEl.textContent = `${rows.length} visit${rows.length === 1 ? '' : 's'} on ${fmtDay(dStr)} · Philippine time.`;
+      if (!rows.length) {
+        listEl.innerHTML = `<div class="attendance-empty">No check-ins recorded on ${esc(fmtDay(dStr))}.</div>`;
+        if (pagerEl) pagerEl.innerHTML = '';
+        return;
+      }
+      const totalPages = Math.max(1, Math.ceil(rows.length / V_PAGE_SIZE));
+      if (live.staffVisitPage > totalPages) live.staffVisitPage = totalPages;
+      const page = live.staffVisitPage;
+      const slice = rows.slice((page - 1) * V_PAGE_SIZE, page * V_PAGE_SIZE);
+      listEl.innerHTML = slice.map(v => {
+        const m = live.members.find(x => x.id === v.member_id);
+        return `<div class="staff-row">${memberAvatar(m)}<div class="staff-row-main"><strong>${esc(m?.full_name || 'Member')} · ${v.checked_out_at ? 'Checkout' : 'Check-in'}</strong><small>${esc(m?.member_no || '')} · ${esc(phDateTime(v.checked_out_at || v.checked_in_at))}</small></div></div>`;
+      }).join('');
+      if (!pagerEl) return;
+      if (totalPages <= 1) { pagerEl.innerHTML = ''; return; }
+      const pages = Array.from({ length: totalPages }, (_, i) => i + 1).filter(n => n === 1 || n === totalPages || Math.abs(n - page) <= 1);
+      let nums = '', prev = 0;
+      for (const n of pages) {
+        if (prev && n - prev > 1) nums += '<span class="owner-pager-gap">…</span>';
+        nums += `<button type="button" class="owner-page-num ${n === page ? 'is-current' : ''}" data-vp="${n}">${n}</button>`;
+        prev = n;
+      }
+      pagerEl.innerHTML = `<div class="owner-pager"><span class="owner-pager-count">Showing ${(page - 1) * V_PAGE_SIZE + 1}–${Math.min(page * V_PAGE_SIZE, rows.length)} of ${rows.length}</span><div class="owner-pager-buttons"><button type="button" class="outline" id="vp-prev" ${page <= 1 ? 'disabled' : ''}>‹ Prev</button><div class="owner-pager-pages">${nums}</div><button type="button" class="outline" id="vp-next" ${page >= totalPages ? 'disabled' : ''}>Next ›</button></div></div>`;
+      pagerEl.querySelector('#vp-prev')?.addEventListener('click', () => { live.staffVisitPage -= 1; paintVisitDay(rows); });
+      pagerEl.querySelector('#vp-next')?.addEventListener('click', () => { live.staffVisitPage += 1; paintVisitDay(rows); });
+      pagerEl.querySelectorAll('[data-vp]').forEach(btn => btn.onclick = () => { live.staffVisitPage = Number(btn.dataset.vp); paintVisitDay(rows); });
+    };
+    const loadVisitDay = async () => {
+      const dStr = live.staffVisitDate;
+      const dInput = staffContent.querySelector('#vl-date');
+      const prevBtn = staffContent.querySelector('#vl-prev');
+      const nextBtn = staffContent.querySelector('#vl-next');
+      const todayBtn = staffContent.querySelector('#vl-today');
+      if (dInput) dInput.value = dStr;
+      if (nextBtn) nextBtn.disabled = dStr >= today;
+      if (todayBtn) todayBtn.disabled = dStr === today;
+      const localMatches = live.visits.filter(v => String(v.visit_date).slice(0, 10) === dStr);
+      paintVisitDay(visitCache.get(dStr) || localMatches);
+      try {
+        const { data, error } = await sb.from('attendance_visits').select('*').eq('visit_date', dStr).order('checked_in_at', { ascending: false }).limit(200);
+        if (!error && Array.isArray(data)) {
+          const rows = data.length || dStr !== today ? data : localMatches;
+          visitCache.set(dStr, rows);
+          paintVisitDay(rows);
+        }
+      } catch { /* keep localMatches */ }
+      if (prevBtn) prevBtn.onclick = () => { live.staffVisitDate = shiftIso(live.staffVisitDate, -1); live.staffVisitPage = 1; loadVisitDay(); };
+      if (nextBtn) nextBtn.onclick = () => { const n = shiftIso(live.staffVisitDate, 1); live.staffVisitDate = n > today ? today : n; live.staffVisitPage = 1; loadVisitDay(); };
+      if (todayBtn) todayBtn.onclick = () => { live.staffVisitDate = today; live.staffVisitPage = 1; loadVisitDay(); };
+      if (dInput) dInput.onchange = () => { if (dInput.value) { live.staffVisitDate = dInput.value > today ? today : dInput.value; live.staffVisitPage = 1; loadVisitDay(); } };
+    };
+    loadVisitDay();
+
     staffContent.querySelectorAll('.att-out').forEach(button => button.onclick = async () => {
       try { await ui.call('check_out', { p_member_id: button.dataset.member }); toastLive('Checkout recorded.'); await refreshData(true); renderStaffCheckins(); } catch (error) { toastLive(friendly(error)); }
     });
     staffContent.querySelectorAll('.att-correct').forEach(button => button.onclick = () => correctVisit(button.dataset.visit));
+    staffContent.querySelectorAll('.staff-req-void').forEach(button => button.onclick = () => requestOwnerApproval(button.dataset.kind, button.dataset.id, button.dataset.label, renderStaffCheckins));
   }
 
   async function correctVisit(visitId) {
@@ -3324,10 +4453,22 @@
           <article class="rp-kpi"><span class="rp-kpi-icon">₱</span><div><small>RECEIPTS TODAY</small><strong>${todaySalesRows.length}</strong><em>product sales</em></div></article>
         </div>
       </div>
-      <section class="staff-pos-card owner-directory"><div class="panel-head"><div><div class="staff-kicker">POINT OF SALE</div><h3>Sale cart</h3><p>Add products to the cart — the total and change update automatically.</p></div><button class="outline clear-cart">Clear cart</button></div>
+      <section class="staff-pos-card owner-directory"><div class="panel-head"><div><div class="staff-kicker">POINT OF SALE</div><h3>Sale cart</h3><p>Add products to the cart — the total and change update automatically.</p></div></div>
         <div class="inventory-list">${items.map(item => `<div class="inventory-row"><span class="inventory-icon">${productIcon(item.name)}</span><div><strong>${esc(item.name)}</strong><small>${peso(item.price)} each · ${item.quantity} ${esc(item.unit)} in stock</small></div><span class="status-tag ${item.quantity <= item.threshold ? 'status-expiring' : ''}">${item.quantity === 0 ? 'Out of stock' : item.quantity <= item.threshold ? 'Low stock' : 'In stock'}</span><div class="inventory-actions"><button class="outline add-to-cart" data-id="${item.id}" ${item.quantity === 0 ? 'disabled' : ''}>Add to cart</button></div></div>`).join('') || '<p class="sub">No products yet. The owner adds products in their inventory page.</p>'}</div>
-        <div id="cart-panel" class="cart-panel" hidden></div></section>`;
-    staffContent.querySelector('.clear-cart').onclick = () => { cart.clear(); drawCart(); };
+        <div id="cart-panel" class="cart-panel" hidden></div></section>
+      <section class="staff-table-card" style="margin-top:16px">
+        <div class="panel-head"><div><div class="staff-kicker">TODAY’S SALES</div><h3>Receipts issued today</h3><p>Wrong input? Request a void — only the owner can approve reversals.</p></div><span class="status-tag">${peso(todaySalesTotal)}</span></div>
+        ${live.sales.filter(s => String(s.sold_on).slice(0, 10) === today).map(s => {
+          const pend = hasPendingApproval('void_sale', s.id);
+          const action = s.voided_at
+            ? '<span class="status-tag status-deactivated">Voided</span>'
+            : pend
+              ? '<span class="status-tag status-expiring">Pending owner</span>'
+              : `<button class="outline staff-req-void" data-kind="void_sale" data-id="${s.id}" data-label="${esc(s.receipt_no)} · ${peso(s.total)}">Request void</button>`;
+          return `<div class="attention-row"><div><strong>${esc(s.receipt_no)} · ${esc(s.customer_name || 'Walk-in customer')}</strong><small>${esc(s.method)}${s.reference ? ' · Ref ' + esc(s.reference) : ''} · ${esc(chTime(s.created_at))}</small></div><span style="${s.voided_at ? 'text-decoration:line-through;opacity:.55' : ''}">${peso(s.total)}</span>${action}</div>`;
+        }).join('') || '<p class="sub">No product sales recorded yet today.</p>'}
+      </section>`;
+    staffContent.querySelectorAll('.staff-req-void').forEach(button => button.onclick = () => requestOwnerApproval(button.dataset.kind, button.dataset.id, button.dataset.label, renderStaffInventory));
     staffContent.querySelectorAll('.add-to-cart').forEach(button => button.onclick = () => {
       const item = items.find(i => i.id === button.dataset.id);
       const line = cart.get(item.id);
